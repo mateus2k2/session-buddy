@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tab couldn't be restored</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    .card {
+      background: #2a2a3e;
+      border: 1px solid #3a3a5c;
+      border-radius: 10px;
+      padding: 2rem 2.5rem;
+      max-width: 600px;
+      width: 100%;
+      text-align: center;
+    }
+    .icon { font-size: 2.5rem; margin-bottom: 1rem; }
+    h1 { font-size: 1.2rem; color: #f38ba8; margin-bottom: 0.5rem; }
+    p { color: #a6adc8; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .url-box {
+      background: #1e1e2e;
+      border: 1px solid #45475a;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      font-family: monospace;
+      font-size: 0.85rem;
+      word-break: break-all;
+      margin-bottom: 1.5rem;
+      color: #cdd6f4;
+      text-align: left;
+    }
+    .btn-row { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+    button {
+      background: #1a73e8;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 0.6rem 1.5rem;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    button:hover { background: #1557b0; }
+    button.secondary {
+      background: #3a3a5c;
+      color: #cdd6f4;
+    }
+    button.secondary:hover { background: #4a4a6c; }
+    .hint { margin-top: 1.25rem; color: #6c7086; font-size: 0.8rem; }
+    .status { margin-top: 0.75rem; color: #a6e3a1; font-size: 0.85rem; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">⚠️</div>
+  <h1 id="title-text">Tab couldn't be restored</h1>
+  <p>This tab failed to open automatically. Use the button below to open it.</p>
+  <div class="url-box" id="url-display"></div>
+  <div class="btn-row">
+    <button id="btn-open">Open in this tab</button>
+    <button class="secondary" id="btn-copy">Copy URL</button>
+  </div>
+  <div class="status" id="status"></div>
+</div>
+<script src="placeholder.js"></script>
+</body>
+</html>

@@ -62,6 +62,23 @@ A Firefox port of the Chrome Session Buddy extension. Save, restore, and organiz
 
 For private window cookie support, go to `about:addons` → Session Buddy → **Allow in private windows**.
 
+### Local file tab support (`file://` URLs)
+
+Firefox restricts extensions from opening `file://` URLs by default. To enable it, add the following to your Firefox profile's `user.js` file (create it if it doesn't exist, next to `prefs.js` in your [profile folder](https://support.mozilla.org/en-US/kb/profiles-where-firefox-stores-user-data)):
+
+```js
+user_pref("capability.policy.policynames", "localfilelinks");
+user_pref("capability.policy.localfilelinks.sites", "moz-extension://YOUR-EXTENSION-UUID");
+user_pref("capability.policy.localfilelinks.checkloaduri.enabled", "allAccess");
+```
+
+Replace `YOUR-EXTENSION-UUID` with the internal UUID shown at `about:debugging#/runtime/this-firefox` next to Session Buddy (it looks like `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, not the `@` ID from the manifest). Restart Firefox after saving `user.js`.
+
+Without this setting, sessions containing `file://` tabs will open a placeholder page for those tabs instead of the file directly.
+
+- https://github.com/sienori/Tab-Session-Manager/issues/931#issuecomment-1229373777
+- https://github.com/sienori/Tab-Session-Manager/issues/1277#issuecomment-3747922135
+
 ## Requirements
 
 - Firefox 136 or later (for tab group support: Firefox 136+)

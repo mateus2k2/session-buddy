@@ -165,7 +165,7 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
 
-async function captureCurrentSession(name, scope = "all") {
+async function captureCurrentSession(name, scope = "all", { fetchFavicons = true } = {}) {
   const queryInfo = scope === "current" ? { currentWindow: true } : {};
   const tabs = await browser.tabs.query(queryInfo);
 
@@ -178,7 +178,9 @@ async function captureCurrentSession(name, scope = "all") {
       windowsMap[wid] = { tabs: [] };
       windowIds.push(wid);
     }
-    const favicon = await fetchFaviconAsDataUrl(tab.favIconUrl || "");
+    const favicon = fetchFavicons
+      ? await fetchFaviconAsDataUrl(tab.favIconUrl || "")
+      : (tab.favIconUrl || "");
     windowsMap[wid].tabs.push({
       id: tab.id,
       index: tab.index,
@@ -306,6 +308,14 @@ async function openSession(session, mode = "newWindow") {
   }
 }
 
+const PLACEHOLDER_BASE = browser.runtime.getURL("placeholder/index.html");
+
+function placeholderUrl(url, title) {
+  return PLACEHOLDER_BASE +
+    "?url=" + encodeURIComponent(url) +
+    "&title=" + encodeURIComponent(title || "");
+}
+
 async function createTabsInWindow(win, windowId, isCurrentWindow) {
   const sortedTabs = [...win.tabs].sort((a, b) => a.index - b.index);
   const oldIdToNewId = {};
@@ -330,14 +340,19 @@ async function createTabsInWindow(win, windowId, isCurrentWindow) {
     try {
       const newTab = await browser.tabs.create(createOpts);
       oldIdToNewId[tab.id] = newTab.id;
-    } catch {
-      // Retry without cookieStoreId if container no longer exists
-      delete createOpts.cookieStoreId;
+    } catch (e) {
+      const isMissingContainer = e?.message?.startsWith("No cookie store exists");
+      if (isMissingContainer) {
+        delete createOpts.cookieStoreId;
+      } else {
+        createOpts.url = placeholderUrl(url || "", tab.title || "");
+        delete createOpts.cookieStoreId;
+      }
       try {
         const newTab = await browser.tabs.create(createOpts);
         oldIdToNewId[tab.id] = newTab.id;
-      } catch (e) {
-        console.warn("[session-buddy] Failed to create tab", url, e);
+      } catch (e2) {
+        console.warn("[session-buddy] Failed to create tab", url, e2);
       }
     }
   }
@@ -469,6 +484,12 @@ browser.runtime.onMessage.addListener((request, sender) => {
         return { ok: true };
       }
 
+      case "navigateTab": {
+        // Used by placeholder page to navigate itself to the original URL via extension API
+        await browser.tabs.update(request.tabId, { url: request.url });
+        return { ok: true };
+      }
+
       default:
         return { ok: false, error: "unknown message type" };
     }
@@ -483,11 +504,18 @@ browser.action.onClicked.addListener(() => {
 // ─── Auto-history ─────────────────────────────────────────────────────────────
 
 let lastSnapshot = null;
+let _snapshotTimer = null;
 
-async function updateSnapshot() {
-  try {
-    lastSnapshot = await captureCurrentSession("", "all");
-  } catch {}
+function scheduleSnapshot() {
+  clearTimeout(_snapshotTimer);
+  _snapshotTimer = setTimeout(async () => {
+    try {
+      // Skip favicon network fetches for history snapshots — store URLs as-is
+      lastSnapshot = await captureCurrentSession("", "all", { fetchFavicons: false });
+    } catch (e) {
+      console.warn("[session-buddy] updateSnapshot failed", e);
+    }
+  }, 1500);
 }
 
 async function commitHistory(type) {
@@ -512,28 +540,37 @@ async function commitHistory(type) {
   }
 }
 
-// Keep snapshot fresh on tab/window changes
-browser.tabs.onCreated.addListener(updateSnapshot);
-browser.tabs.onRemoved.addListener(updateSnapshot);
-browser.tabs.onUpdated.addListener(updateSnapshot);
-browser.windows.onCreated.addListener(updateSnapshot);
+// Keep snapshot fresh on tab/window changes (debounced — many events fire per page load)
+browser.tabs.onCreated.addListener(scheduleSnapshot);
+browser.tabs.onRemoved.addListener(scheduleSnapshot);
+browser.tabs.onUpdated.addListener(scheduleSnapshot);
+browser.windows.onCreated.addListener(scheduleSnapshot);
 
 // Save history when all windows close (browser closing)
 browser.windows.onRemoved.addListener(async () => {
   await ensureInit();
   const remaining = await browser.windows.getAll();
   if (remaining.length === 0) {
+    // Capture immediately (no debounce) before the browser exits
+    try {
+      lastSnapshot = await captureCurrentSession("", "all", { fetchFavicons: false });
+    } catch {}
     await commitHistory("browserClosed");
   } else {
-    await updateSnapshot();
+    scheduleSnapshot();
   }
 });
 
 // Periodic auto-save every 5 minutes
-browser.alarms.create("historyAutoSave", { periodInMinutes: 5 });
+browser.alarms.get("historyAutoSave").then(existing => {
+  if (!existing) browser.alarms.create("historyAutoSave", { periodInMinutes: 5 });
+});
 browser.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== "historyAutoSave") return;
   await ensureInit();
-  await updateSnapshot();
+  // Capture immediately (skip debounce) so we commit the freshest state
+  try {
+    lastSnapshot = await captureCurrentSession("", "all", { fetchFavicons: false });
+  } catch {}
   await commitHistory("autoSave");
 });

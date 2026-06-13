@@ -293,6 +293,7 @@ async function handleImportText(file) {
 function clearTabSelection() {
   state.selectedTabKeys.clear();
   state.lastTabKey = null;
+  for (const { el } of state.tabRenderOrder) el.classList.remove("selected");
   updateSelectionBar();
 }
 
@@ -339,11 +340,12 @@ function selectAllInWindow(winKeys) {
 }
 
 function updateSelectionBar() {
-  const bar       = document.getElementById("selection-bar");
-  const countEl   = document.getElementById("sel-count");
-  const removeBtn = document.getElementById("sel-remove");
-  const openBtn   = document.getElementById("sel-open");
-  const saveBtn   = document.getElementById("sel-save");
+  const bar          = document.getElementById("selection-bar");
+  const countEl      = document.getElementById("sel-count");
+  const removeBtn    = document.getElementById("sel-remove");
+  const newWinBtn    = document.getElementById("sel-new-window");
+  const openBtn      = document.getElementById("sel-open");
+  const saveBtn      = document.getElementById("sel-save");
   const n = state.selectedTabKeys.size;
 
   if (n === 0) {
@@ -352,9 +354,12 @@ function updateSelectionBar() {
     bar.classList.remove("hidden");
     countEl.textContent = `${n} tab${n !== 1 ? "s" : ""} selected`;
     const isCurrent = state.view === "current";
-    removeBtn.style.display = isCurrent ? "none" : "";
-    openBtn.style.display   = isCurrent ? "none" : "";
-    saveBtn.style.display   = isCurrent ? "" : "none";
+    const isSession = !isCurrent && state.view !== "cookies" && state.view !== "history";
+    removeBtn.style.display  = isSession ? "" : "none";
+    newWinBtn.style.display  = isSession ? "" : "none";
+    openBtn.style.display    = isSession ? "" : "none";
+    saveBtn.style.display    = "";
+    saveBtn.textContent      = isCurrent ? "Save selected" : "Extract to collection";
   }
 }
 
@@ -394,16 +399,81 @@ document.getElementById("sel-open").addEventListener("click", async () => {
   clearTabSelection();
 });
 
-document.getElementById("sel-remove").addEventListener("click", async () => {
-  await removeSelectedTabsFromSession();
+document.getElementById("sel-remove").addEventListener("click", () => {
+  const n = state.selectedTabKeys.size;
+  showModal(
+    "Remove tabs",
+    `<p>Remove ${n} selected tab${n !== 1 ? "s" : ""} from this collection?</p>`,
+    [
+      { label: "Cancel", cls: "btn-ghost", action: hideModal },
+      { label: "Remove", cls: "btn-danger", action: async () => {
+        hideModal();
+        await removeSelectedTabsFromSession();
+      }},
+    ]
+  );
 });
+
+document.getElementById("sel-new-window").addEventListener("click", () => {
+  extractSelectedToNewWindow();
+});
+
+function extractSelectedToNewWindow() {
+  if (state.view === "current") return;
+  const session = state.sessions.find(s => s.id === state.view);
+  if (!session) return;
+
+  const toMove = new Set(state.selectedTabKeys);
+
+  // Collect selected tabs (in render order) and remove them from their source windows
+  const movedTabs = [];
+  for (let wi = 0; wi < session.windows.length; wi++) {
+    const win = session.windows[wi];
+    const sorted = [...win.tabs].sort((a, b) => a.index - b.index);
+    const kept = [];
+    sorted.forEach((tab, ti) => {
+      if (toMove.has(`${wi}:${ti}`)) {
+        movedTabs.push({ ...tab, groupId: -1, groupColor: undefined, groupTitle: undefined });
+      } else {
+        kept.push(tab);
+      }
+    });
+    kept.forEach((t, i) => { t.index = i; });
+    win.tabs = kept;
+  }
+
+  if (movedTabs.length === 0) return;
+
+  // Re-index the moved tabs sequentially
+  movedTabs.forEach((t, i) => { t.index = i; });
+
+  // Drop now-empty windows
+  session.windows = session.windows.filter(w => w.tabs.length > 0);
+
+  // Append the new window
+  session.windows.push({ tabs: movedTabs, tabGroups: [], incognito: false });
+  session.tabCount    = session.windows.reduce((s, w) => s + w.tabs.length, 0);
+  session.windowCount = session.windows.length;
+
+  clearTabSelection();
+  send({ type: "updateSession", session }).then(() => {
+    const idx = state.sessions.findIndex(s => s.id === session.id);
+    if (idx !== -1) state.sessions[idx] = session;
+    renderSessionView(session);
+    toast(`Extracted ${movedTabs.length} tab${movedTabs.length !== 1 ? "s" : ""} to new window`);
+  }).catch(() => toast("Failed to save"));
+}
 
 document.getElementById("sel-save").addEventListener("click", () => {
   saveSelectedTabs();
 });
 
 function saveSelectedTabs() {
-  if (!state.currentState) return;
+  const isCurrent = state.view === "current";
+  const sourceWindows = isCurrent
+    ? state.currentState?.windows
+    : state.sessions.find(s => s.id === state.view)?.windows;
+  if (!sourceWindows) return;
 
   // Group selected tab objects by their window render index
   const byWindow = {};
@@ -419,7 +489,7 @@ function saveSelectedTabs() {
 
   // Build a windows array from the selected tabs, preserving window metadata
   const windows = wiIndices.map((wi) => {
-    const originalWin = state.currentState.windows[wi];
+    const originalWin = sourceWindows[wi];
     const sortedTabs = [...byWindow[wi]].sort((a, b) => a.index - b.index);
     // Re-index so tabs start at 0 in the new session
     const reindexed = sortedTabs.map((t, i) => ({ ...t, index: i }));
@@ -609,6 +679,8 @@ function renderSidebar() {
   document.getElementById("sidebar-current").classList.toggle("active", state.view === "current");
   document.getElementById("sidebar-history").classList.toggle("active", state.view === "history");
   document.getElementById("sidebar-cookies").classList.toggle("active", state.view === "cookies");
+
+  if (typeof initSidebarDragDrop === "function") initSidebarDragDrop();
 }
 
 // ─── View routing ─────────────────────────────────────────────────────────────
@@ -689,9 +761,11 @@ function renderSessionView(session) {
   ], "btn-ghost"));
 
   actionsEl.appendChild(makeDropdownButton("⋯", [
-    { label: "Rename", action: () => showRenameModal(session) },
+    { label: "Rename",    action: () => showRenameModal(session) },
+    { label: "Duplicate", action: () => duplicateSession(session) },
+    { label: "Replace with current browser", action: () => showReplaceModal(session) },
     { separator: true },
-    { label: "Delete", action: () => showDeleteModal(session), danger: true }
+    { label: "Delete",    action: () => showDeleteModal(session), danger: true }
   ], "btn-ghost"));
 
   const areaEl = document.getElementById("content-area");
@@ -701,6 +775,8 @@ function renderSessionView(session) {
   for (let i = 0; i < session.windows.length; i++) {
     areaEl.appendChild(buildWindowBlock(session.windows[i], i, session.windows.length, state.searchQuery, true));
   }
+
+  if (typeof initSessionDragDrop === "function") initSessionDragDrop(session, areaEl);
 }
 
 // ─── Window block builder ─────────────────────────────────────────────────────
@@ -708,6 +784,7 @@ function renderSessionView(session) {
 function buildWindowBlock(win, winIdx, totalWindows, query, selectable) {
   const block = document.createElement("div");
   block.className = "window-block";
+  block.dataset.winIdx = winIdx;
 
   const isPrivate = win.incognito === true;
   const label = windowLabel(winIdx, totalWindows);
@@ -1058,6 +1135,59 @@ function showDeleteModal(session) {
   );
 }
 
+function duplicateSession(session) {
+  const copy = {
+    ...session,
+    id: genId(),
+    name: `${session.name} (copy)`,
+    date: Date.now(),
+    windows: JSON.parse(JSON.stringify(session.windows)), // deep clone
+  };
+  showModal(
+    "Duplicate collection",
+    `<input type="text" id="dup-name-input" value="${esc(copy.name)}" placeholder="Collection name" />`,
+    [
+      { label: "Cancel",    cls: "btn-ghost",   action: hideModal },
+      { label: "Duplicate", cls: "btn-primary",  action: async () => {
+        copy.name = document.getElementById("dup-name-input").value.trim() || copy.name;
+        hideModal();
+        await send({ type: "importSessions", sessions: [copy] });
+        toast("Collection duplicated");
+        await loadSessions();
+        renderSidebar();
+      }},
+    ]
+  );
+}
+
+function showReplaceModal(session) {
+  showModal(
+    "Replace with current browser",
+    `<p>Overwrite "<strong>${esc(session.name)}</strong>" with all currently open tabs? This cannot be undone.</p>`,
+    [
+      { label: "Cancel",  cls: "btn-ghost",  action: hideModal },
+      { label: "Replace", cls: "btn-danger",  action: async () => {
+        hideModal();
+        const live = await send({ type: "getCurrentState" });
+        if (!live || !live.windows.length) { toast("No tabs to capture"); return; }
+        const updated = {
+          ...session,
+          windows: live.windows,
+          tabCount: live.tabCount,
+          windowCount: live.windowCount,
+          date: Date.now(),
+        };
+        await send({ type: "updateSession", session: updated });
+        toast("Collection replaced");
+        await loadSessions();
+        const refreshed = state.sessions.find(s => s.id === session.id);
+        if (refreshed) renderSessionView(refreshed);
+        renderSidebar();
+      }},
+    ]
+  );
+}
+
 // ─── Open session ─────────────────────────────────────────────────────────────
 
 async function openSession(id, mode) {
@@ -1207,7 +1337,7 @@ function buildHistoryEntryEl(entry) {
   openBtn.textContent = "Open in new window";
   openBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    send({ type: "openHistoryEntry", entry, mode: "newWindow" });
+    send({ type: "openHistoryEntry", entry, mode: "newWindow" }).catch(() => {});
   });
 
   const delBtn = document.createElement("button");
@@ -1637,7 +1767,9 @@ document.addEventListener("keydown", (e) => {
   const modalVisible = !document.getElementById("modal-overlay").classList.contains("hidden");
 
   if (e.key === "Escape") {
-    if (modalVisible) hideModal();
+    if (modalVisible) { hideModal(); return; }
+    if (state.selectedTabKeys.size > 0) { clearTabSelection(); return; }
+    if (state.selectedSessionIds.size > 0) { clearSidebarSelection(); return; }
     return;
   }
 
@@ -1659,7 +1791,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Delete") {
     e.preventDefault();
     if (state.selectedTabKeys.size > 0 && isSessionView) {
-      removeSelectedTabsFromSession();
+      document.getElementById("sel-remove").click(); // goes through the confirmation modal
     } else if (state.selectedSessionIds.size > 0) {
       document.getElementById("sidebar-sel-del").click();
     } else if (isSessionView) {
