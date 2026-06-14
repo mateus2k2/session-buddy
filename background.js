@@ -573,6 +573,16 @@ browser.runtime.onMessage.addListener((request, sender) => {
         return { ok: true };
       }
 
+      case "getRecentlyClosed": {
+        const closed = await browser.sessions.getRecentlyClosed({ maxResults: 25 });
+        return closed;
+      }
+
+      case "restoreClosedSession": {
+        await browser.sessions.restore(request.sessionId);
+        return { ok: true };
+      }
+
       default:
         return { ok: false, error: "unknown message type" };
     }

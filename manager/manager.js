@@ -47,6 +47,58 @@ function send(msg) {
   return browser.runtime.sendMessage(msg);
 }
 
+// ─── Undo / Redo ──────────────────────────────────────────────────────────────
+let _undoSnapshot = null; // { sessionId, session } deep copy — state before last action
+let _redoSnapshot = null; // deep copy — state before last undo (enables redo)
+
+function updateUndoRedoBtns() {
+  const isSessionView = state.view !== "current" && state.view !== "cookies" &&
+                        state.view !== "history" && state.view !== "closed";
+  const undoBtn = document.getElementById("btn-undo");
+  const redoBtn = document.getElementById("btn-redo");
+  undoBtn.disabled = !_undoSnapshot || !isSessionView;
+  redoBtn.disabled = !_redoSnapshot || !isSessionView;
+}
+
+function pushUndo(session) {
+  _undoSnapshot = { sessionId: session.id, session: JSON.parse(JSON.stringify(session)) };
+  _redoSnapshot = null;
+  updateUndoRedoBtns();
+}
+
+async function undoLastAction() {
+  if (!_undoSnapshot) return;
+  const current = state.sessions.find(s => s.id === _undoSnapshot.sessionId);
+  if (current) _redoSnapshot = { sessionId: current.id, session: JSON.parse(JSON.stringify(current)) };
+  const { sessionId, session } = _undoSnapshot;
+  _undoSnapshot = null;
+  updateUndoRedoBtns();
+  await send({ type: "updateSession", session });
+  const idx = state.sessions.findIndex(s => s.id === sessionId);
+  if (idx !== -1) state.sessions[idx] = session;
+  if (state.view === sessionId) renderSessionView(session);
+  renderSidebar();
+  toast("Undone");
+}
+
+async function redoLastAction() {
+  if (!_redoSnapshot) return;
+  const current = state.sessions.find(s => s.id === _redoSnapshot.sessionId);
+  if (current) _undoSnapshot = { sessionId: current.id, session: JSON.parse(JSON.stringify(current)) };
+  const { sessionId, session } = _redoSnapshot;
+  _redoSnapshot = null;
+  updateUndoRedoBtns();
+  await send({ type: "updateSession", session });
+  const idx = state.sessions.findIndex(s => s.id === sessionId);
+  if (idx !== -1) state.sessions[idx] = session;
+  if (state.view === sessionId) renderSessionView(session);
+  renderSidebar();
+  toast("Redone");
+}
+
+document.getElementById("btn-undo").addEventListener("click", undoLastAction);
+document.getElementById("btn-redo").addEventListener("click", redoLastAction);
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function formatDate(ts) {
   const d = new Date(ts);
@@ -434,7 +486,7 @@ function updateSelectionBar() {
     bar.classList.remove("hidden");
     countEl.textContent = `${n} tab${n !== 1 ? "s" : ""} selected`;
     const isCurrent = state.view === "current";
-    const isSession = !isCurrent && state.view !== "cookies" && state.view !== "history";
+    const isSession = !isCurrent && state.view !== "cookies" && state.view !== "history" && state.view !== "closed";
     removeBtn.style.display  = isSession ? "" : "none";
     newWinBtn.style.display  = isSession ? "" : "none";
     openBtn.style.display    = isSession ? "" : "none";
@@ -639,6 +691,8 @@ async function removeSelectedTabsFromSession() {
   const session = state.sessions.find(s => s.id === state.view);
   if (!session) return;
 
+  pushUndo(session);
+
   // Build set of "wi:ti" keys to remove
   const toRemove = new Set(state.selectedTabKeys);
 
@@ -677,7 +731,7 @@ async function removeSelectedTabsFromSession() {
   await send({ type: "updateSession", session: updated });
   const idx = state.sessions.findIndex(s => s.id === updated.id);
   if (idx !== -1) state.sessions[idx] = updated;
-  toast("Removed from session");
+  toast("Removed from collection", undoLastAction);
   renderSidebar();
   renderSessionView(updated);
 }
@@ -772,6 +826,7 @@ function renderSidebar() {
   updateSidebarSelBar();
   document.getElementById("sidebar-current").classList.toggle("active", state.view === "current");
   document.getElementById("sidebar-history").classList.toggle("active", state.view === "history");
+  document.getElementById("sidebar-closed").classList.toggle("active", state.view === "closed");
   document.getElementById("sidebar-cookies").classList.toggle("active", state.view === "cookies");
 
   if (typeof initSidebarDragDrop === "function") initSidebarDragDrop();
@@ -782,7 +837,10 @@ function renderSidebar() {
 function selectView(viewId) {
   state.view = viewId;
   state.historyEntry = null;
+  _undoSnapshot = null;
+  _redoSnapshot = null;
   clearTabSelection();
+  updateUndoRedoBtns();
   renderSidebar();
   if (viewId === "current") {
     renderCurrentView();
@@ -790,6 +848,8 @@ function selectView(viewId) {
     renderCookieView();
   } else if (viewId === "history") {
     renderHistoryView();
+  } else if (viewId === "closed") {
+    renderClosedView();
   } else {
     const session = state.sessions.find(s => s.id === viewId);
     if (session) renderSessionView(session);
@@ -953,10 +1013,12 @@ function buildWindowBlock(win, winIdx, totalWindows, query, selectable, editSess
           { label: "Cancel", cls: "btn-ghost", action: hideModal },
           { label: "Rename", cls: "btn-primary", action: async () => {
             const newName = document.getElementById("win-rename-input").value.trim();
+            pushUndo(editSession);
             win.name = newName || undefined;
             hideModal();
             await send({ type: "updateSession", session: editSession });
             renderSessionView(editSession);
+            toast("Window renamed", undoLastAction);
           }},
         ]
       );
@@ -1345,23 +1407,39 @@ async function openSession(id, mode) {
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
 let toastTimer = null;
-function toast(msg) {
+function toast(msg, action = null, actionLabel = "Undo") {
   const el = document.getElementById("toast");
-  el.textContent = msg;
+  el.innerHTML = "";
+
+  const span = document.createElement("span");
+  span.textContent = msg;
+  el.appendChild(span);
+
+  if (action) {
+    const btn = document.createElement("button");
+    btn.className = "toast-action-btn";
+    btn.textContent = actionLabel;
+    btn.addEventListener("click", () => {
+      clearTimeout(toastTimer);
+      el.classList.add("hidden");
+      action();
+    });
+    el.appendChild(btn);
+  }
+
   el.classList.remove("hidden");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.add("hidden"), 2500);
+  toastTimer = setTimeout(() => el.classList.add("hidden"), action ? 5000 : 2500);
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────
 
 async function exportBackup() {
   const data = await send({ type: "exportBackup" });
-  const blob = new Blob([JSON.stringify({ ...data, version: 1, exportedAt: Date.now() }, null, 2)], { type: "application/json" });
-  const url  = URL.createObjectURL(blob);
+  const json = JSON.stringify({ ...data, version: 1, exportedAt: Date.now() }, null, 2);
   const date = new Date().toISOString().slice(0, 10);
-  await browser.downloads.download({ url, filename: `tabkeeper-backup-${date}.json`, saveAs: false });
-  URL.revokeObjectURL(url);
+  const filename = `tabkeeper-backup-${date}.json`;
+  await downloadFileSaveAs(filename, json, "application/json");
 }
 
 document.getElementById("btn-settings").addEventListener("click", async () => {
@@ -1445,6 +1523,7 @@ const _origSelectView = selectView;
 // patch: close sidebar when user picks an item on narrow screen
 document.getElementById("sidebar-current").addEventListener("click", closeSidebarIfMobile, true);
 document.getElementById("sidebar-history").addEventListener("click", closeSidebarIfMobile, true);
+document.getElementById("sidebar-closed").addEventListener("click", closeSidebarIfMobile, true);
 document.getElementById("sidebar-cookies").addEventListener("click", closeSidebarIfMobile, true);
 
 // ─── Search ───────────────────────────────────────────────────────────────────
@@ -1467,6 +1546,11 @@ document.getElementById("sidebar-current").addEventListener("click", () => {
 document.getElementById("sidebar-history").addEventListener("click", () => {
   clearSidebarSelection();
   selectView("history");
+});
+
+document.getElementById("sidebar-closed").addEventListener("click", () => {
+  clearSidebarSelection();
+  selectView("closed");
 });
 
 document.getElementById("sidebar-cookies").addEventListener("click", () => {
@@ -1658,6 +1742,121 @@ function buildHistoryEntryEl(entry) {
   });
 
   return el;
+}
+
+// ─── Recently Closed view ─────────────────────────────────────────────────────
+
+async function renderClosedView() {
+  const area = document.getElementById("content-area");
+  area.innerHTML = renderEmptyHTML("Loading…");
+  state.tabRenderOrder = [];
+
+  const closed = await send({ type: "getRecentlyClosed" }).catch(() => []);
+
+  document.getElementById("content-title").textContent = "Recently closed";
+  document.getElementById("content-actions").innerHTML = "";
+
+  const count = closed.length;
+  document.getElementById("content-sub").textContent =
+    count ? `${count} item${count !== 1 ? "s" : ""}` : "Nothing recently closed";
+  document.getElementById("closed-sidebar-sub").textContent =
+    count ? `${count} item${count !== 1 ? "s" : ""}` : "— items";
+
+  area.innerHTML = "";
+
+  if (!count) {
+    area.innerHTML = renderEmptyHTML("No recently closed tabs or windows");
+    return;
+  }
+
+  const restore = async (sessionId) => {
+    try {
+      await send({ type: "restoreClosedSession", sessionId });
+      toast("Restored");
+      renderClosedView();
+    } catch (e) {
+      toast("Could not restore");
+    }
+  };
+
+  for (const item of closed) {
+    if (item.tab) {
+      const tab = item.tab;
+      const row = document.createElement("div");
+      row.className = "closed-item";
+
+      const favicon = document.createElement("img");
+      favicon.className = "closed-favicon";
+      favicon.src = tab.favIconUrl || "";
+      favicon.onerror = () => { favicon.src = ""; favicon.style.display = "none"; };
+
+      const text = document.createElement("div");
+      text.className = "closed-item-text";
+      text.innerHTML =
+        `<div class="closed-item-title">${esc(tab.title || tab.url)}</div>` +
+        `<div class="closed-item-url">${esc(tab.url)}</div>`;
+
+      const time = document.createElement("span");
+      time.className = "closed-item-time";
+      time.textContent = formatDate(item.lastModified * 1000);
+
+      const btn = document.createElement("button");
+      btn.className = "btn btn-ghost closed-restore-btn";
+      btn.textContent = "Restore";
+      btn.addEventListener("click", () => restore(tab.sessionId));
+
+      row.appendChild(favicon);
+      row.appendChild(text);
+      row.appendChild(time);
+      row.appendChild(btn);
+      area.appendChild(row);
+
+    } else if (item.window) {
+      const win = item.window;
+      const tabCount = win.tabs?.length ?? 0;
+
+      const block = document.createElement("div");
+      block.className = "closed-window-block";
+
+      const header = document.createElement("div");
+      header.className = "closed-window-header";
+      header.innerHTML =
+        `<svg viewBox="0 0 16 16" fill="none" class="closed-window-icon">
+           <rect x="1" y="2" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.2"/>
+           <line x1="1" y1="6" x2="15" y2="6" stroke="currentColor" stroke-width="1.2"/>
+         </svg>` +
+        `<span class="closed-window-title">Window — ${tabCountLabel(tabCount)}</span>` +
+        `<span class="closed-item-time">${formatDate(item.lastModified * 1000)}</span>`;
+
+      const restoreBtn = document.createElement("button");
+      restoreBtn.className = "btn btn-ghost closed-restore-btn";
+      restoreBtn.textContent = "Restore";
+      restoreBtn.addEventListener("click", () => restore(win.sessionId));
+      header.appendChild(restoreBtn);
+
+      const tabList = document.createElement("div");
+      tabList.className = "closed-window-tabs";
+      for (const tab of (win.tabs || []).slice(0, 8)) {
+        const tabRow = document.createElement("div");
+        tabRow.className = "closed-item closed-item-indent";
+        tabRow.innerHTML =
+          `<div class="closed-item-text">` +
+          `<div class="closed-item-title">${esc(tab.title || tab.url || "")}</div>` +
+          `<div class="closed-item-url">${esc(tab.url || "")}</div></div>`;
+        tabList.appendChild(tabRow);
+      }
+      if ((win.tabs?.length ?? 0) > 8) {
+        const more = document.createElement("div");
+        more.className = "closed-item-more";
+        more.textContent = `+ ${win.tabs.length - 8} more tabs`;
+        tabList.appendChild(more);
+      }
+
+      block.appendChild(header);
+      block.appendChild(tabList);
+      area.appendChild(block);
+    }
+  }
 }
 
 async function renderHistoryView() {
@@ -2058,7 +2257,19 @@ document.addEventListener("keydown", (e) => {
   if (modalVisible) return;
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
 
-  const isSessionView = state.view !== "current" && state.view !== "cookies" && state.view !== "history";
+  const isSessionView = state.view !== "current" && state.view !== "cookies" && state.view !== "history" && state.view !== "closed";
+
+  if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+    e.preventDefault();
+    undoLastAction();
+    return;
+  }
+
+  if ((e.ctrlKey || e.metaKey) && e.key === "y") {
+    e.preventDefault();
+    redoLastAction();
+    return;
+  }
 
   if (e.key === "F2") {
     e.preventDefault();
@@ -2093,6 +2304,11 @@ async function init() {
     if (!entries) return;
     document.getElementById("history-sidebar-sub").textContent =
       `${entries.length} entr${entries.length !== 1 ? "ies" : "y"}`;
+  }).catch(() => {});
+  send({ type: "getRecentlyClosed" }).then(items => {
+    if (!items) return;
+    document.getElementById("closed-sidebar-sub").textContent =
+      items.length ? `${items.length} item${items.length !== 1 ? "s" : ""}` : "— items";
   }).catch(() => {});
 }
 

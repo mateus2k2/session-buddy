@@ -79,7 +79,7 @@ html, body {
 #search-input::placeholder { color: rgba(255,255,255,0.6); }
 #search-input:focus { background: rgba(0,0,0,0.35); }
 
-.topbar-actions { margin-left: auto; }
+.topbar-actions { margin-left: auto; display: flex; flex-direction: row; gap: 8px; }
 
 .icon-btn {
   background: none;
@@ -93,6 +93,7 @@ html, body {
 }
 .icon-btn:hover { background: rgba(255,255,255,0.15); }
 .icon-btn svg { width: 18px; height: 18px; }
+.icon-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
 
 /* ─── App body ───────────────────────────────────────────────────────────── */
 .app-body {
@@ -643,7 +644,7 @@ mark { background: rgba(255,200,0,0.2); color: inherit; border-radius: 2px; padd
 .settings-select:focus,
 .settings-input:focus { border-color: var(--accent); }
 .settings-input { text-align: right; }
-.settings-backup-btn { width: 80px; padding: 5px 0; font-size: 12px; }
+.settings-backup-btn { width: 80px; padding: 5px; font-size: 12px; }
 
 /* ─── Toast ───────────────────────────────────────────────────────────────── */
 .toast {
@@ -654,13 +655,31 @@ mark { background: rgba(255,200,0,0.2); color: inherit; border-radius: 2px; padd
   background: var(--bg-panel);
   border: 1px solid var(--border);
   color: var(--text-pri);
-  padding: 10px 20px;
+  padding: 9px 12px 9px 20px;
   border-radius: 6px;
   font-size: 12px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.4);
   z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  white-space: nowrap;
 }
 .toast.hidden { display: none; }
+.toast-action-btn {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  border-radius: 4px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.toast-action-btn:hover { background: var(--accent-h); }
 
 /* ─── Scrollbar ───────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
@@ -764,6 +783,70 @@ mark { background: rgba(255,200,0,0.2); color: inherit; border-radius: 2px; padd
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
+
+/* ─── Recently closed view ───────────────────────────────────────────────── */
+.closed-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.closed-item:last-child { border-bottom: none; }
+.closed-item-indent { padding-left: 36px; background: rgba(255,255,255,0.02); }
+
+.closed-favicon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.closed-item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.closed-item-title {
+  font-size: 13px;
+  color: var(--text-pri);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.closed-item-url {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.closed-item-time { font-size: 11px; color: var(--text-dim); flex-shrink: 0; white-space: nowrap; }
+.closed-item-more { font-size: 11px; color: var(--text-dim); padding: 4px 36px 8px; }
+
+.closed-restore-btn { font-size: 12px; padding: 4px 10px; flex-shrink: 0; }
+
+.closed-window-block {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 10px 14px;
+  overflow: hidden;
+}
+
+.closed-window-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-mid);
+  border-bottom: 1px solid var(--border);
+}
+.closed-window-icon { width: 14px; height: 14px; color: var(--text-sec); flex-shrink: 0; }
+.closed-window-title { font-size: 12px; font-weight: 600; color: var(--text-sec); text-transform: uppercase; letter-spacing: 0.4px; flex: 1; }
+.closed-window-tabs { background: var(--bg-dark); }
 
 /* ─── Cookie view ─────────────────────────────────────────────────────────── */
 .sidebar-item.active[data-view="cookies"] { background: rgba(154,109,215,0.18); }

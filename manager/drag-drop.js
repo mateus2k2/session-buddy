@@ -222,6 +222,7 @@ function setupWindowDrop(block, winIdx) {
 // ─── Data mutations ───────────────────────────────────────────────────────────
 
 function applyTabMove(session, srcWin, srcTabSort, dstWin, dstTabSort) {
+  pushUndo(session);
   const srcWindow = session.windows[srcWin];
   const dstWindow = session.windows[dstWin];
 
@@ -267,6 +268,7 @@ function applyTabMove(session, srcWin, srcTabSort, dstWin, dstTabSort) {
 }
 
 function applyBulkTabMove(session, bulkKeys, dstWin, dstTabSort) {
+  pushUndo(session);
   // Collect tabs in render order so relative order is preserved
   const tabsToMove = state.tabRenderOrder
     .filter(r => bulkKeys.has(r.key))
@@ -310,6 +312,7 @@ function applyBulkTabMove(session, bulkKeys, dstWin, dstTabSort) {
 }
 
 function applyWindowMerge(session, srcWin, dstWin) {
+  pushUndo(session);
   const srcWindow = session.windows[srcWin];
   // Splice first so dstWin index may shift
   session.windows.splice(srcWin, 1);
@@ -346,7 +349,7 @@ function persistAndRerender(session, reselectTabs = null) {
       }
       updateSelectionBar();
     }
-    toast("Collection updated");
+    toast("Collection updated", undoLastAction);
   }).catch(() => toast("Failed to save"));
 }
 

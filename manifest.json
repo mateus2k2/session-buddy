@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "TabKeeper",
   "description": "Save, restore, and organize your browser sessions, tab groups, and history.",
-  "version": "1.7.5",
+  "version": "1.8.0",
   "author": "mateus2k2",
   "browser_specific_settings": {
     "gecko": {
@@ -33,7 +33,8 @@
     "downloads",
     "alarms",
     "tabGroups",
-    "cookies"
+    "cookies",
+    "sessions"
   ],
   "host_permissions": [
     "<all_urls>"
