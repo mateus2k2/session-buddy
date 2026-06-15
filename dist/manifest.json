@@ -2,12 +2,12 @@
   "manifest_version": 3,
   "name": "TabKeeper",
   "description": "Save, restore, and organize your browser sessions, tab groups, and history.",
-  "version": "1.9.0",
+  "version": "1.8.6",
   "author": "mateus2k2",
   "browser_specific_settings": {
     "gecko": {
       "id": "session-buddy@mateusfilipe2k2",
-      "strict_min_version": "142.0",
+      "strict_min_version": "140.0",
       "data_collection_permissions": {
         "required": ["none"],
         "optional": []
@@ -38,11 +38,10 @@
     "alarms",
     "tabGroups",
     "cookies",
-    "sessions",
-    "identity"
+    "sessions"
   ],
   "options_ui": {
-    "page": "manager/manager.html",
+    "page": "manager/index.html",
     "open_in_tab": true
   },
   "host_permissions": [
