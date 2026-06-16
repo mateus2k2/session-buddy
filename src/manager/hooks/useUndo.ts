@@ -13,7 +13,8 @@ export function useUndo() {
   }, [dispatch]);
 
   const undo = useCallback(async () => {
-    const snap = state.undoSnapshot;
+    const stack = state.undoStack;
+    const snap = stack.length > 0 ? stack[stack.length - 1]! : null;
     if (!snap) return;
 
     switch (snap.type) {
@@ -81,7 +82,8 @@ export function useUndo() {
   }, [state, dispatch, toast, loadSessions]);
 
   const redo = useCallback(async () => {
-    const snap = state.redoSnapshot;
+    const rstack = state.redoStack;
+    const snap = rstack.length > 0 ? rstack[rstack.length - 1]! : null;
     if (!snap) return;
 
     switch (snap.type) {
@@ -143,5 +145,5 @@ export function useUndo() {
     toast("Redone");
   }, [state, dispatch, toast, loadSessions]);
 
-  return { undo, redo, canUndo: !!state.undoSnapshot, canRedo: !!state.redoSnapshot };
+  return { undo, redo, canUndo: state.undoStack.length > 0, canRedo: state.redoStack.length > 0 };
 }

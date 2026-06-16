@@ -82,9 +82,11 @@ function HistoryEntryItem({
                 key={i}
                 win={win}
                 winIdx={i}
+                winKey={`w${i}`}
                 totalWindows={entry.windows.length}
                 query=""
                 selectable={false}
+                treeEnabled={false}
               />
             ))}
           </div>

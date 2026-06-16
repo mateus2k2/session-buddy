@@ -62,11 +62,12 @@ function ContextMenu({ session, x, y, onClose, onRename, onDelete }: {
 
 function SortableSessionItem({
   session, isActive, isSelected, isCurrentView, query,
-  onClick, onContextMenu,
+  onClick, onContextMenu, onPencilClick,
 }: {
   session: Session; isActive: boolean; isSelected: boolean; isCurrentView: boolean; query: string;
   onClick: (e: React.MouseEvent) => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onPencilClick: (e: React.MouseEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: session.id,
@@ -99,6 +100,17 @@ function SortableSessionItem({
         <div className="session-nav-name" title={session.name}>{session.name}</div>
         <div className="session-nav-meta">{tabCountLabel(total)}</div>
       </div>
+      <button
+        className="session-nav-pencil"
+        title="Rename or delete"
+        onClick={e => { e.stopPropagation(); onPencilClick(e); }}
+        onPointerDown={e => e.stopPropagation()}
+      >
+        <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
+          <path d="M11 2.5a1.5 1.5 0 0 1 2.12 0l.38.38a1.5 1.5 0 0 1 0 2.12L5 13.5 2 14l.5-3L11 2.5Z"
+            stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
     </div>
   );
 }
@@ -342,6 +354,7 @@ export function Sidebar({ onLoadSessions, counts }: Props) {
                     e.preventDefault();
                     setCtxMenu({ session, x: e.clientX, y: e.clientY });
                   }}
+                  onPencilClick={e => setCtxMenu({ session, x: e.clientX, y: e.clientY })}
                 />
               ))}
             </SortableContext>

@@ -11,8 +11,8 @@ const initialState: AppState = {
   selectedSessionIds: new Set(),
   lastSessionId: null,
   historyEntry: null,
-  undoSnapshot: null,
-  redoSnapshot: null,
+  undoStack: [],
+  redoStack: [],
   toastMsg: null,
   toastAction: null,
   toastActionLabel: "Undo",
@@ -35,23 +35,32 @@ function reducer(state: AppState, action: AppAction): AppState {
     case "SET_HISTORY_ENTRY": return { ...state, historyEntry: action.entry };
 
     case "PUSH_UNDO":
-      return { ...state, undoSnapshot: action.snapshot, redoSnapshot: null };
+      return {
+        ...state,
+        // Keep the last 50 steps; any new action clears the redo stack
+        undoStack: [...state.undoStack, action.snapshot].slice(-50),
+        redoStack: [],
+      };
     case "APPLY_UNDO":
       return {
         ...state,
-        undoSnapshot: null,
-        redoSnapshot: action.redoSnapshot,
+        undoStack: state.undoStack.slice(0, -1),
+        redoStack: action.redoSnapshot
+          ? [...state.redoStack, action.redoSnapshot]
+          : state.redoStack,
         sessions: action.sessions ?? state.sessions,
       };
     case "APPLY_REDO":
       return {
         ...state,
-        redoSnapshot: null,
-        undoSnapshot: action.undoSnapshot,
+        redoStack: state.redoStack.slice(0, -1),
+        undoStack: action.undoSnapshot
+          ? [...state.undoStack, action.undoSnapshot]
+          : state.undoStack,
         sessions: action.sessions ?? state.sessions,
       };
     case "CLEAR_UNDO_REDO":
-      return { ...state, undoSnapshot: null, redoSnapshot: null };
+      return { ...state, undoStack: [], redoStack: [] };
 
     case "SHOW_TOAST":
       return {

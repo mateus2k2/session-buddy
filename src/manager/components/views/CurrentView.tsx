@@ -3,7 +3,7 @@ import { useApp } from "../../context/AppContext";
 import { send } from "../../utils/messaging";
 import { tabCountLabel, esc } from "../../utils/helpers";
 import { WindowBlock } from "./WindowBlock";
-import type { Window as SessionWindow } from "../../context/types";
+import type { Window as SessionWindow, TabRenderEntry } from "../../context/types";
 
 interface CurrentState {
   windows: SessionWindow[];
@@ -60,9 +60,16 @@ function Dropdown({
 }
 
 export function CurrentView({ onLoadSessions }: Props) {
-  const { state, showModal, hideModal, toast } = useApp();
+  const { state, dispatch, showModal, hideModal, toast } = useApp();
   const [data, setData] = useState<CurrentState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [treeEnabled, setTreeEnabled] = useState(false);
+
+  useEffect(() => {
+    void send({ type: "getConfig" }).then((cfg: { ifSupportTst?: boolean }) => {
+      setTreeEnabled(cfg?.ifSupportTst === true);
+    });
+  }, []);
 
   const fetchState = useCallback(async () => {
     setLoading(true);
@@ -77,6 +84,17 @@ export function CurrentView({ onLoadSessions }: Props) {
   }, []);
 
   useEffect(() => { void fetchState(); }, [fetchState]);
+
+  useEffect(() => {
+    const order: TabRenderEntry[] = [];
+    (data?.windows ?? []).forEach((win, wi) => {
+      [...win.tabs].sort((a, b) => a.index - b.index).forEach((tab, ti) => {
+        order.push({ key: `${wi}:${ti}`, tab });
+      });
+    });
+    dispatch({ type: "SET_TAB_RENDER_ORDER", order });
+    dispatch({ type: "SET_SELECTED_TABS", keys: new Set() });
+  }, [data, dispatch]);
 
   useEffect(() => {
     function close(e: MouseEvent) {
@@ -204,6 +222,7 @@ export function CurrentView({ onLoadSessions }: Props) {
               query={query}
               selectable={true}
               isLiveTab={true}
+              treeEnabled={treeEnabled}
             />
           ))
         )}

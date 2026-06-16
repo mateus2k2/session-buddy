@@ -28,7 +28,12 @@ export function parseTextImport(text: string): Session[] {
   const sessions: Session[] = [];
   let cur: Session | null = null;
   let curWin: SessionWindow | null = null;
-  let curGroupId: string | null = null;
+  let curGroupId: number | null = null;
+  let curGroupTitle: string | null = null;
+  let curGroupColor: string | undefined = undefined;
+  let groupCounter = 0;
+
+  const resetGroup = () => { curGroupId = null; curGroupTitle = null; curGroupColor = undefined; };
 
   const ensureSession = (name = "Imported Session") => {
     if (!cur) {
@@ -49,25 +54,49 @@ export function parseTextImport(text: string): Session[] {
     const trimmed = rawLine.trim();
     const level = getIndentLevel(rawLine);
 
-    if (!trimmed) { curGroupId = null; continue; }
-    if (trimmed === "---") { cur = null; curWin = null; curGroupId = null; continue; }
+    if (!trimmed) { resetGroup(); continue; }
+    if (trimmed === "---") { cur = null; curWin = null; groupCounter = 0; resetGroup(); continue; }
 
     if (level === 0) {
       if (trimmed.startsWith("Saved:")) continue;
-      curWin = null; curGroupId = null;
-      cur = { id: genId(), name: trimmed, date: Date.now(), windows: [], tabCount: 0, windowCount: 0 };
-      sessions.push(cur);
+      const asTab = parseTabLine(trimmed);
+      if (asTab) {
+        // Plain URL at level 0 — add to current session/window instead of creating a new session
+        ensureWindow();
+        curWin!.tabs.push({ ...asTab, index: curWin!.tabs.length, groupId: curGroupId ?? -1,
+          groupTitle: curGroupTitle ?? undefined, groupColor: curGroupColor } as Tab);
+      } else {
+        // Non-URL text — it's a session name
+        curWin = null; groupCounter = 0; resetGroup();
+        cur = { id: genId(), name: trimmed, date: Date.now(), windows: [], tabCount: 0, windowCount: 0 };
+        sessions.push(cur);
+      }
     } else if (level === 1) {
-      ensureSession();
-      const isPrivate = trimmed.includes("[Private]");
-      curWin = { tabs: [], incognito: isPrivate };
-      curGroupId = null;
-      cur!.windows.push(curWin);
+      const asTab = parseTabLine(trimmed);
+      if (asTab) {
+        // URL at level 1 — treat as an ungrouped tab, not a window header
+        ensureWindow();
+        resetGroup();
+        curWin!.tabs.push({ ...asTab, index: curWin!.tabs.length, groupId: -1 } as Tab);
+      } else {
+        // Non-URL text — it's a window header
+        ensureSession();
+        const isPrivate = trimmed.includes("[Private]");
+        curWin = { tabs: [], incognito: isPrivate };
+        groupCounter = 0; resetGroup();
+        cur!.windows.push(curWin);
+      }
     } else if (level === 2) {
       ensureWindow();
       if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-        curGroupId = genId();
+        // Group header: "[Title]" or "[Title | color]"
+        const inner = trimmed.slice(1, -1);
+        const pipe = inner.indexOf(" | ");
+        curGroupTitle = (pipe !== -1 ? inner.slice(0, pipe) : inner).trim();
+        curGroupColor = pipe !== -1 ? inner.slice(pipe + 3).trim() : undefined;
+        curGroupId = ++groupCounter;
       } else {
+        resetGroup();
         const tab = parseTabLine(trimmed);
         if (tab && curWin) {
           curWin.tabs.push({ ...tab, index: curWin.tabs.length, groupId: -1 } as Tab);
@@ -77,7 +106,13 @@ export function parseTextImport(text: string): Session[] {
       ensureWindow();
       const tab = parseTabLine(trimmed);
       if (tab && curWin) {
-        curWin.tabs.push({ ...tab, index: curWin.tabs.length, groupId: curGroupId ? 0 : -1 } as Tab);
+        curWin.tabs.push({
+          ...tab,
+          index: curWin.tabs.length,
+          groupId: curGroupId ?? -1,
+          groupTitle: curGroupTitle ?? undefined,
+          groupColor: curGroupColor,
+        } as Tab);
       }
     }
   }

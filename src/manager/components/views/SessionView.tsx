@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "../../context/AppContext";
 import { send } from "../../utils/messaging";
 import { formatDate, tabCountLabel, deepClone, esc } from "../../utils/helpers";
@@ -61,6 +61,13 @@ function DropdownButton({ label, items, cls = "btn-ghost" }: { label: string; it
 
 export function SessionView({ session, onLoadSessions }: Props) {
   const { state, dispatch, showModal, hideModal, toast, pushUndo } = useApp();
+  const [treeEnabled, setTreeEnabled] = useState(false);
+
+  useEffect(() => {
+    void send({ type: "getConfig" }).then((cfg: { ifSupportTst?: boolean }) => {
+      setTreeEnabled(cfg?.ifSupportTst === true);
+    });
+  }, []);
 
   const total = session.windows.reduce((s, w) => s + w.tabs.length, 0);
 
@@ -196,6 +203,7 @@ export function SessionView({ session, onLoadSessions }: Props) {
             query={state.searchQuery.toLowerCase()}
             selectable
             editSession={session}
+            treeEnabled={treeEnabled}
             onSessionUpdate={onLoadSessions}
           />
         ))}

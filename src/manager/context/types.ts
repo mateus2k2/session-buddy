@@ -81,8 +81,8 @@ export interface AppState {
   selectedSessionIds: Set<string>;
   lastSessionId: string | null;
   historyEntry: HistoryEntry | null;
-  undoSnapshot: UndoSnapshot | null;
-  redoSnapshot: UndoSnapshot | null;
+  undoStack: UndoSnapshot[];
+  redoStack: UndoSnapshot[];
   toastMsg: string | null;
   toastAction: (() => void) | null;
   toastActionLabel: string;

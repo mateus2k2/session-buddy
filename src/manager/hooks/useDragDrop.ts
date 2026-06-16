@@ -2,7 +2,7 @@ import { useRef, useEffect } from "react";
 import { useApp } from "../context/AppContext";
 import { send } from "../utils/messaging";
 import { deepClone } from "../utils/helpers";
-import type { Session, Tab } from "../context/types";
+import type { Session, Tab, UndoSnapshot } from "../context/types";
 
 // ─── Module-level drag state (one drag at a time globally) ───────────────────
 
@@ -365,7 +365,7 @@ export function useDragDrop(
 // ─── Sidebar session drag-drop ────────────────────────────────────────────────
 
 interface SidebarDragCallbacks {
-  pushUndo: (s: ReturnType<typeof useApp>["state"]["undoSnapshot"]) => void;
+  pushUndo: (s: UndoSnapshot) => void;
   toast: (msg: string, action?: () => void) => void;
   sessions: Session[];
   showModal: (title: string, body: string, actions: Array<{ label: string; cls?: string; action: () => void }>) => void;

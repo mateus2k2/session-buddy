@@ -44,6 +44,7 @@ interface Props {
   selectable?: boolean;
   editSession?: Session | null;
   isLiveTab?: boolean;
+  treeEnabled?: boolean;
   onSessionUpdate?: () => void;
   onSaveWindow?: (winIdx: number) => void;
 }
@@ -104,7 +105,7 @@ function DroppableWinBody({
 
 export function WindowBlock({
   win, winIdx, winKey, totalWindows, query, selectable = true,
-  editSession = null, isLiveTab = false, onSessionUpdate, onSaveWindow,
+  editSession = null, isLiveTab = false, treeEnabled = false, onSessionUpdate, onSaveWindow,
 }: Props) {
   const { state, dispatch, showModal, hideModal, toast, pushUndo } = useApp();
   const { tabOrder, tabMap } = useDragState();
@@ -155,7 +156,7 @@ export function WindowBlock({
     );
   }
 
-  const depthMap = buildDepthMap(currentTabs);
+  const depthMap = treeEnabled ? buildDepthMap(currentTabs) : new Map<number, number>();
 
   // Build tab rows — SortableTab in edit mode, plain TabRow in live/readonly mode
   const rows: React.ReactNode[] = [];

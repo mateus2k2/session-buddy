@@ -4,6 +4,7 @@ import { send } from "./utils/messaging";
 import { useUndo } from "./hooks/useUndo";
 import { parseTextImport } from "./utils/import";
 import { exportBackup } from "./utils/download";
+import { esc, deepClone } from "./utils/helpers";
 import { TopBar } from "./components/TopBar";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { SessionView } from "./components/views/SessionView";
@@ -23,7 +24,7 @@ interface SidebarCounts {
 }
 
 export function App() {
-  const { state, dispatch, showModal, hideModal, toast } = useApp();
+  const { state, dispatch, showModal, hideModal, toast, pushUndo } = useApp();
   const { undo, redo } = useUndo();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [counts, setCounts] = useState<SidebarCounts>({ tabs: null, history: null, closed: null });
@@ -62,10 +63,120 @@ export function App() {
 
       if ((e.ctrlKey || e.metaKey) && e.key === "z") { e.preventDefault(); await undo(); return; }
       if ((e.ctrlKey || e.metaKey) && e.key === "y") { e.preventDefault(); await redo(); return; }
+
+      const session = state.sessions.find(s => s.id === state.view) ?? null;
+      const hasTabSel = state.selectedTabKeys.size > 0;
+
+      // ── Session view shortcuts ──────────────────────────────────────────────
+      if (session) {
+        // Ctrl+A — select all tabs in current session
+        if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+          e.preventDefault();
+          const allKeys = new Set<string>();
+          session.windows.forEach((win, wi) =>
+            win.tabs.forEach((_, ti) => allKeys.add(`${wi}:${ti}`))
+          );
+          dispatch({ type: "SET_SELECTED_TABS", keys: allKeys });
+          return;
+        }
+
+        // Ctrl+C — copy URLs of selected tabs
+        if ((e.ctrlKey || e.metaKey) && e.key === "c" && hasTabSel) {
+          e.preventDefault();
+          const urls: string[] = [];
+          session.windows.forEach((win, wi) =>
+            [...win.tabs].sort((a, b) => a.index - b.index).forEach((tab, ti) => {
+              if (state.selectedTabKeys.has(`${wi}:${ti}`)) urls.push(tab.url);
+            })
+          );
+          await navigator.clipboard.writeText(urls.join("\n"));
+          toast("URLs copied");
+          return;
+        }
+
+        // F2 — rename session
+        if (e.key === "F2") {
+          e.preventDefault();
+          showModal(
+            "Rename collection",
+            `<input type="text" id="kb-rename-input" value="${esc(session.name)}" placeholder="Collection name" />`,
+            [
+              { label: "Cancel", cls: "btn-ghost", action: hideModal },
+              {
+                label: "Rename", cls: "btn-primary", action: async () => {
+                  const name = (document.getElementById("kb-rename-input") as HTMLInputElement).value.trim();
+                  if (!name) return;
+                  pushUndo({ type: "rename", sessionId: session.id, oldName: session.name });
+                  hideModal();
+                  await send({ type: "renameSession", id: session.id, name });
+                  toast("Renamed");
+                  await loadSessions();
+                }
+              },
+            ]
+          );
+          return;
+        }
+
+        // Delete — remove selected tabs (if any), otherwise delete the whole session
+        if (e.key === "Delete") {
+          e.preventDefault();
+          if (hasTabSel) {
+            // Remove selected tabs from session
+            pushUndo({ type: "session", sessionId: session.id, session: deepClone(session) });
+            const toRemove = new Set(state.selectedTabKeys);
+            const newWindows = session.windows.map((win, wi) => {
+              const sorted = [...win.tabs].sort((a, b) => a.index - b.index);
+              const kept = sorted.filter((_, ti) => !toRemove.has(`${wi}:${ti}`));
+              kept.forEach((t, i) => { t.index = i; });
+              return { ...win, tabs: kept };
+            }).filter(w => w.tabs.length > 0);
+            dispatch({ type: "SET_SELECTED_TABS", keys: new Set() });
+            if (newWindows.length === 0) {
+              await send({ type: "deleteSession", id: session.id });
+              toast("Session deleted");
+              dispatch({ type: "SET_VIEW", view: "current" });
+              await loadSessions();
+            } else {
+              const updated = { ...session, windows: newWindows, tabCount: newWindows.reduce((n, w) => n + w.tabs.length, 0), windowCount: newWindows.length };
+              await send({ type: "updateSession", session: updated });
+              dispatch({ type: "SET_SESSIONS", sessions: state.sessions.map(s => s.id === updated.id ? updated : s) });
+              toast("Removed from collection");
+            }
+          } else {
+            // Confirm-delete the whole session
+            showModal(
+              "Delete collection",
+              `<p>Delete "<strong>${esc(session.name)}</strong>"?</p>`,
+              [
+                { label: "Cancel", cls: "btn-ghost", action: hideModal },
+                {
+                  label: "Delete", cls: "btn-danger", action: async () => {
+                    pushUndo({ type: "delete", sessions: [deepClone(session)], oldOrder: [] });
+                    hideModal();
+                    await send({ type: "deleteSession", id: session.id });
+                    toast("Collection deleted");
+                    dispatch({ type: "SET_VIEW", view: "current" });
+                    await loadSessions();
+                  }
+                },
+              ]
+            );
+          }
+          return;
+        }
+
+        // Enter — open session in a new window (no modifier, no selection)
+        if (e.key === "Enter" && !hasTabSel && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+          e.preventDefault();
+          await send({ type: "openSession", id: session.id, mode: "newWindow" });
+          return;
+        }
+      }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [state, dispatch, hideModal, undo, redo]);
+  }, [state, dispatch, showModal, hideModal, toast, pushUndo, loadSessions, undo, redo]);
 
   // Wire up hidden file inputs
   useEffect(() => {
@@ -198,13 +309,22 @@ export function App() {
       ]
     );
 
-    document.getElementById("cfg-export-btn")?.addEventListener("click", async () => {
-      const data = await send({ type: "exportBackup" }) as Record<string, unknown>;
-      await exportBackup(data);
-    });
-    document.getElementById("cfg-import-btn")?.addEventListener("click", () => {
-      (document.getElementById("import-backup-input") as HTMLInputElement).click();
-    });
+    // Defer until React re-renders the modal into the DOM
+    setTimeout(() => {
+      document.getElementById("cfg-export-btn")?.addEventListener("click", async () => {
+        try {
+          const data = await send({ type: "exportBackup" }) as Record<string, unknown>;
+          await exportBackup(data);
+        } catch {
+          toast("Export failed");
+        }
+      });
+      document.getElementById("cfg-import-btn")?.addEventListener("click", () => {
+        const input = document.getElementById("import-backup-input") as HTMLInputElement | null;
+        if (input) input.click();
+        else toast("Import unavailable — reload the page");
+      });
+    }, 0);
   }
 
   async function openSyncModal() {
