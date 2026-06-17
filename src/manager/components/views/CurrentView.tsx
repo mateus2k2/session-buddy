@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useApp } from "../../context/AppContext";
 import { send } from "../../utils/messaging";
-import { tabCountLabel, esc } from "../../utils/helpers";
+import { tabCountLabel, esc, genId } from "../../utils/helpers";
 import { WindowBlock } from "./WindowBlock";
 import type { Window as SessionWindow, TabRenderEntry } from "../../context/types";
 

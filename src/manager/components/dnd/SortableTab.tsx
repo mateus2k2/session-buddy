@@ -1,4 +1,5 @@
 import { useSortable } from "@dnd-kit/react/sortable";
+import { OptimisticSortingPlugin } from "@dnd-kit/dom/sortable";
 import { TabRow } from "../views/TabRow";
 import type { Tab } from "../../context/types";
 
@@ -26,6 +27,10 @@ export function SortableTab({
     type: "item",
     accept: "item",
     group: winKey,
+    // onDragOver already updates React state (tabOrder), so dnd-kit's built-in
+    // CSS-transform optimistic sorting would double-apply the move and cause a
+    // visible swap on drop. Disable it and let React re-renders drive the UI.
+    plugins: (defaults) => defaults.filter((p) => p !== OptimisticSortingPlugin),
   });
 
   return (

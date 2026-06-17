@@ -44,11 +44,6 @@ export function TopBar({ onToggleSidebar, onOpenSettings, onOpenSync }: Props) {
       </div>
 
       <div className="topbar-actions">
-        <button className="icon-btn" title="Undo" disabled={!canUndo} onClick={() => void undo()}>
-          <svg viewBox="0 0 24 24" fill="none">
-            <path d="M20 7H9C7.13 7 6.2 7 5.5 7.4C5.04 7.67 4.67 8.04 4.4 8.5C4 9.2 4 10.13 4 12C4 13.87 4 14.8 4.4 15.5C4.67 15.96 5.04 16.33 5.5 16.6C6.2 17 7.13 17 9 17H16M20 7L17 4M20 7L17 10" stroke="#ccc" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
         <button className="icon-btn" title="Redo" disabled={!canRedo} onClick={() => void redo()}>
           <svg viewBox="0 0 24 24" fill="none">
             <g transform="scale(-1,1) translate(-24,0)">
@@ -56,10 +51,15 @@ export function TopBar({ onToggleSidebar, onOpenSettings, onOpenSync }: Props) {
             </g>
           </svg>
         </button>
+        <button className="icon-btn" title="Undo" disabled={!canUndo} onClick={() => void undo()}>
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M20 7H9C7.13 7 6.2 7 5.5 7.4C5.04 7.67 4.67 8.04 4.4 8.5C4 9.2 4 10.13 4 12C4 13.87 4 14.8 4.4 15.5C4.67 15.96 5.04 16.33 5.5 16.6C6.2 17 7.13 17 9 17H16M20 7L17 4M20 7L17 10" stroke="#ccc" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
         <button className="icon-btn" title="Cloud Sync (Google Drive)" onClick={onOpenSync}>
           <svg viewBox="0 0 24 24" fill="none">
-            <path d="M6.5 19a4.5 4.5 0 0 1 0-9h.5A5 5 0 0 1 17 9.5v.5a4 4 0 0 1 0 8H6.5Z" stroke="#ccc" strokeWidth="1.5" strokeLinejoin="round"/>
-            <path d="M12 13v4M10 15l2-2 2 2" stroke="#ccc" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M6.28571 19C3.91878 19 2 17.1038 2 14.7647C2 12.4256 3.91878 10.5294 6.28571 10.5294C6.56983 10.5294 6.8475 10.5567 7.11616 10.6089M14.381 8.02721C14.9767 7.81911 15.6178 7.70588 16.2857 7.70588C16.9404 7.70588 17.5693 7.81468 18.1551 8.01498M7.11616 10.6089C6.88706 9.9978 6.7619 9.33687 6.7619 8.64706C6.7619 5.52827 9.32028 3 12.4762 3C15.4159 3 17.8371 5.19371 18.1551 8.01498M7.11616 10.6089C7.68059 10.7184 8.20528 10.9374 8.66667 11.2426M18.1551 8.01498C20.393 8.78024 22 10.8811 22 13.3529C22 16.0599 20.0726 18.3221 17.5 18.8722" stroke="#ccc" strokeWidth="1.5" strokeLinecap="round"/>
+            <path d="M12 16V22M12 16L14 18M12 16L10 18" stroke="#ccc" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
         <button className="icon-btn" title="Settings" onClick={onOpenSettings}>

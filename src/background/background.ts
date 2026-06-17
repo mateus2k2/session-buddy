@@ -502,6 +502,18 @@ browser.runtime.onMessage.addListener((request, sender) => {
         return { ok: true };
       }
 
+      case "replaceSession": {
+        const existing = await dbGet(request.id);
+        if (!existing) return { ok: false };
+        const captured = await captureCurrentSession(existing.name, "all");
+        captured.id = existing.id;
+        captured.name = existing.name;
+        captured.date = existing.date;
+        captured.lastEditedTime = Date.now();
+        await dbPut(captured);
+        return { ok: true };
+      }
+
       case "importSessions": {
         const newIds = [];
         for (const session of request.sessions) {

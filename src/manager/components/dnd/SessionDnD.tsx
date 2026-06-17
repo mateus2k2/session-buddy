@@ -1,5 +1,6 @@
 import { createContext, useContext, useRef, useState, useEffect } from "react";
 import { DragDropProvider, DragOverlay } from "@dnd-kit/react";
+import { RestrictToVerticalAxis } from "@dnd-kit/abstract/modifiers";
 import { move } from "@dnd-kit/helpers";
 import { useApp } from "../../context/AppContext";
 import { send } from "../../utils/messaging";
@@ -18,6 +19,17 @@ export interface DragState {
 const DragStateCtx = createContext<DragState>({ tabOrder: {}, tabMap: {} });
 export const useDragState = () => useContext(DragStateCtx);
 
+// ─── Stable tab ID from content so React keys don't move when order changes ───
+
+function tabContentHash(tab: Tab): string {
+  const str = `${tab.url ?? ""}|${tab.title ?? ""}`;
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(36);
+}
+
 // ─── SessionDnD ───────────────────────────────────────────────────────────────
 
 interface Props {
@@ -35,15 +47,20 @@ export function SessionDnD({ session, onUpdate, children }: Props) {
   const prevTabOrder = useRef<Record<string, string[]>>({});
   const prevTabMap = useRef<Record<string, Tab>>({});
 
-  // Rebuild tabOrder and tabMap whenever the session changes (after save or on load)
+  // Rebuild tabOrder and tabMap whenever the session changes (after save or on load).
+  // Tab IDs are derived from URL+title hash so the same tab keeps the same React key
+  // even when its position (index) changes — preventing a false "swap" animation on drop.
   useEffect(() => {
     const order: Record<string, string[]> = {};
     const dataMap: Record<string, Tab> = {};
     session.windows.forEach((win, wi) => {
       const winKey = `w${wi}`;
       order[winKey] = [];
-      [...win.tabs].sort((a, b) => a.index - b.index).forEach((tab, ti) => {
-        const tabId = `${session.id}-w${wi}-t${ti}`;
+      const seen: Record<string, number> = {};
+      [...win.tabs].sort((a, b) => a.index - b.index).forEach((tab) => {
+        const h = tabContentHash(tab);
+        seen[h] = (seen[h] ?? 0) + 1;
+        const tabId = `${session.id}-w${wi}-${h}${seen[h] > 1 ? `-${seen[h]}` : ""}`;
         order[winKey].push(tabId);
         dataMap[tabId] = tab;
       });
@@ -118,6 +135,25 @@ export function SessionDnD({ session, onUpdate, children }: Props) {
     }
 
     if (source?.type === "item") {
+      // Dropping on a window body (empty area) rather than a specific tab row:
+      // move() doesn't fire for column targets, so the tab may still be in the
+      // source window. Manually append it to the target window.
+      const targetId = String(target?.id ?? "");
+      if (targetId.startsWith("body-")) {
+        const targetWinKey = targetId.slice(5); // "body-w1" → "w1"
+        const tabId = String(source.id);
+        const srcWinKey = Object.keys(tabOrderRef.current).find(
+          k => tabOrderRef.current[k].includes(tabId)
+        );
+        if (srcWinKey && srcWinKey !== targetWinKey && tabOrderRef.current[targetWinKey] !== undefined) {
+          tabOrderRef.current = {
+            ...tabOrderRef.current,
+            [srcWinKey]: tabOrderRef.current[srcWinKey].filter(id => id !== tabId),
+            [targetWinKey]: [...tabOrderRef.current[targetWinKey], tabId],
+          };
+          setTabOrder(tabOrderRef.current);
+        }
+      }
       commitTabsToSession(tabOrderRef.current, source.id as string);
     } else if (source?.type === "window" && target && source.id !== target.id) {
       const srcWinKey = source.id as string;
@@ -233,37 +269,16 @@ export function SessionDnD({ session, onUpdate, children }: Props) {
   return (
     <DragStateCtx.Provider value={{ tabOrder, tabMap: tabMapRef.current }}>
       <DragDropProvider
+        modifiers={[RestrictToVerticalAxis]}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
       >
+        {/* Suppress the default fly-back settle animation. Without this, dnd-kit
+            animates the dropped element back to its source-window placeholder, which
+            looks like the slot "growing" when dropping cross-window. */}
+        <DragOverlay disabled dropAnimation={() => Promise.resolve()}>{null}</DragOverlay>
         {children}
-        <DragOverlay dropAnimation={null}>
-          {(source: any) => {
-            if (source?.type === "item") {
-              const tabId = source.id as string;
-              const tab = tabMapRef.current[tabId];
-              return (
-                <div className="tab-row drag-overlay">
-                  <span className="tab-title">{tab?.title || tab?.url || tabId}</span>
-                </div>
-              );
-            }
-            if (source?.type === "window") {
-              const winKey = source.id as string;
-              const wi = parseInt(winKey.slice(1));
-              const win = session.windows[wi];
-              return (
-                <div className="window-header drag-overlay">
-                  <span className="window-header-title">
-                    {win?.name ?? `Window ${wi + 1}`}
-                  </span>
-                </div>
-              );
-            }
-            return null;
-          }}
-        </DragOverlay>
       </DragDropProvider>
     </DragStateCtx.Provider>
   );

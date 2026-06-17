@@ -325,9 +325,8 @@ export function WindowBlock({
       {({ blockRef, handleRef, isDragging, isDropTarget }) => (
         <div
           ref={blockRef}
-          className="window-block"
+          className={`window-block${isDragging ? " dragging" : ""}`}
           data-win-key={winKey}
-          style={{ opacity: isDragging ? 0.4 : 1 }}
         >
           {renderHeader(isDropTarget, handleRef)}
           <DroppableWinBody winKey={winKey}>

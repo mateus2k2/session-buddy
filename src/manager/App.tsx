@@ -193,9 +193,30 @@ export function App() {
         const data = JSON.parse(text);
         const sessions = Array.isArray(data) ? data : [data];
         if (!sessions.length) throw new Error("empty");
-        const result = await send({ type: "importSessions", sessions }) as { count: number };
-        toast(`Imported ${result.count} session${result.count !== 1 ? "s" : ""}`);
-        await loadSessions();
+        if (sessions.length === 1) {
+          const defaultName = sessions[0].name || file.name.replace(/\.json$/i, "");
+          showModal(
+            "Name this collection",
+            `<input type="text" id="import-name-input" value="${esc(defaultName)}" placeholder="Collection name" />`,
+            [
+              { label: "Cancel", cls: "btn-ghost", action: hideModal },
+              {
+                label: "Import", cls: "btn-primary", action: async () => {
+                  const name = (document.getElementById("import-name-input") as HTMLInputElement).value.trim() || defaultName;
+                  sessions[0].name = name;
+                  hideModal();
+                  await send({ type: "importSessions", sessions });
+                  toast("Imported 1 collection");
+                  await loadSessions();
+                }
+              },
+            ]
+          );
+        } else {
+          const result = await send({ type: "importSessions", sessions }) as { count: number };
+          toast(`Imported ${result.count} collections`);
+          await loadSessions();
+        }
       } catch {
         toast("Import failed — invalid JSON file");
       }
@@ -209,9 +230,30 @@ export function App() {
         const text = await file.text();
         const sessions = parseTextImport(text);
         if (!sessions.length) throw new Error("no sessions found");
-        const result = await send({ type: "importSessions", sessions }) as { count: number };
-        toast(`Imported ${result.count} session${result.count !== 1 ? "s" : ""}`);
-        await loadSessions();
+        if (sessions.length === 1) {
+          const defaultName = sessions[0].name || file.name.replace(/\.txt$/i, "");
+          showModal(
+            "Name this collection",
+            `<input type="text" id="import-name-input" value="${esc(defaultName)}" placeholder="Collection name" />`,
+            [
+              { label: "Cancel", cls: "btn-ghost", action: hideModal },
+              {
+                label: "Import", cls: "btn-primary", action: async () => {
+                  const name = (document.getElementById("import-name-input") as HTMLInputElement).value.trim() || defaultName;
+                  sessions[0].name = name;
+                  hideModal();
+                  await send({ type: "importSessions", sessions });
+                  toast("Imported 1 collection");
+                  await loadSessions();
+                }
+              },
+            ]
+          );
+        } else {
+          const result = await send({ type: "importSessions", sessions }) as { count: number };
+          toast(`Imported ${result.count} collections`);
+          await loadSessions();
+        }
       } catch {
         toast("Import failed — check text file format");
       }
@@ -422,7 +464,7 @@ export function App() {
   }
 
   return (
-    <>
+    <div className={sidebarOpen ? "sidebar-open" : ""}>
       <TopBar
         onToggleSidebar={() => setSidebarOpen(o => !o)}
         onOpenSettings={openSettings}
@@ -435,7 +477,7 @@ export function App() {
         onClick={() => setSidebarOpen(false)}
       />
 
-      <div className={`app-body${sidebarOpen ? "" : " sidebar-hidden"}`}>
+      <div className="app-body">
         <Sidebar onLoadSessions={loadSessions} counts={counts} />
 
         <main className="main-content">
@@ -452,6 +494,6 @@ export function App() {
 
       <Toast />
       <Modal />
-    </>
+    </div>
   );
 }

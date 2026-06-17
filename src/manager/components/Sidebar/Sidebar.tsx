@@ -1,6 +1,5 @@
-import { useState, useRef, useEffect } from "react";
 import {
-  DndContext, DragEndEvent, DragOverlay, PointerSensor,
+  DndContext, DragEndEvent, PointerSensor, TouchSensor,
   useSensor, useSensors, closestCenter,
 } from "@dnd-kit/core";
 import {
@@ -10,7 +9,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useApp } from "../../context/AppContext";
 import { send } from "../../utils/messaging";
-import { tabCountLabel, deepClone, esc } from "../../utils/helpers";
+import { tabCountLabel, deepClone } from "../../utils/helpers";
 import type { Session } from "../../context/types";
 
 interface SidebarCounts {
@@ -24,50 +23,13 @@ interface Props {
   counts: SidebarCounts;
 }
 
-// ─── Context menu ────────────────────────────────────────────────────────────
-
-interface CtxMenuState {
-  session: Session;
-  x: number;
-  y: number;
-}
-
-function ContextMenu({ session, x, y, onClose, onRename, onDelete }: {
-  session: Session; x: number; y: number;
-  onClose: () => void; onRename: () => void; onDelete: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handle(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    }
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [onClose]);
-
-  // Flip if off-screen
-  const style: React.CSSProperties = { position: "fixed", left: x, top: y, zIndex: 9999 };
-
-  return (
-    <div ref={ref} className="ctx-menu" style={style}>
-      <div className="ctx-menu-item" onClick={() => { onClose(); onRename(); }}>Rename</div>
-      <div className="ctx-menu-sep" />
-      <div className="ctx-menu-item danger" onClick={() => { onClose(); onDelete(); }}>Delete</div>
-    </div>
-  );
-}
-
 // ─── Sortable session item ───────────────────────────────────────────────────
 
 function SortableSessionItem({
-  session, isActive, isSelected, isCurrentView, query,
-  onClick, onContextMenu, onPencilClick,
+  session, isSelected, isCurrentView, query, onClick,
 }: {
-  session: Session; isActive: boolean; isSelected: boolean; isCurrentView: boolean; query: string;
+  session: Session; isSelected: boolean; isCurrentView: boolean; query: string;
   onClick: (e: React.MouseEvent) => void;
-  onContextMenu: (e: React.MouseEvent) => void;
-  onPencilClick: (e: React.MouseEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: session.id,
@@ -76,7 +38,6 @@ function SortableSessionItem({
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.4 : 1,
   };
 
   const total = session.tabCount ?? session.windows.reduce((s, w) => s + w.tabs.length, 0);
@@ -85,10 +46,9 @@ function SortableSessionItem({
     <div
       ref={setNodeRef}
       style={style}
-      className={`session-nav-item${isCurrentView ? " active" : ""}${isSelected ? " sel" : ""}`}
+      className={`session-nav-item${isCurrentView ? " active" : ""}${isSelected ? " sel" : ""}${isDragging ? " dragging" : ""}`}
       data-session-id={session.id}
       onClick={onClick}
-      onContextMenu={onContextMenu}
       {...attributes}
       {...listeners}
     >
@@ -100,17 +60,6 @@ function SortableSessionItem({
         <div className="session-nav-name" title={session.name}>{session.name}</div>
         <div className="session-nav-meta">{tabCountLabel(total)}</div>
       </div>
-      <button
-        className="session-nav-pencil"
-        title="Rename or delete"
-        onClick={e => { e.stopPropagation(); onPencilClick(e); }}
-        onPointerDown={e => e.stopPropagation()}
-      >
-        <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
-          <path d="M11 2.5a1.5 1.5 0 0 1 2.12 0l.38.38a1.5 1.5 0 0 1 0 2.12L5 13.5 2 14l.5-3L11 2.5Z"
-            stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </button>
     </div>
   );
 }
@@ -118,14 +67,13 @@ function SortableSessionItem({
 // ─── Main Sidebar ────────────────────────────────────────────────────────────
 
 export function Sidebar({ onLoadSessions, counts }: Props) {
-  const { state, dispatch, toast, showModal, hideModal, pushUndo } = useApp();
+  const { state, dispatch, toast, pushUndo } = useApp();
   const { view, sessions, selectedSessionIds } = state;
 
-  const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null);
-  const [activeDragId, setActiveDragId] = useState<string | null>(null);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } })
   );
 
   function setView(v: string) {
@@ -172,53 +120,9 @@ export function Sidebar({ onLoadSessions, counts }: Props) {
     await onLoadSessions();
   }
 
-  // ─── Context menu actions ─────────────────────────────────────────────────
-
-  function showRenameModal(session: Session) {
-    showModal(
-      "Rename collection",
-      `<input type="text" id="rename-input" value="${esc(session.name)}" placeholder="Collection name" />`,
-      [
-        { label: "Cancel", cls: "btn-ghost", action: hideModal },
-        {
-          label: "Rename", cls: "btn-primary", action: async () => {
-            const name = (document.getElementById("rename-input") as HTMLInputElement).value.trim();
-            if (!name) return;
-            pushUndo({ type: "rename", sessionId: session.id, oldName: session.name });
-            hideModal();
-            await send({ type: "renameSession", id: session.id, name });
-            toast("Renamed", undefined);
-            await onLoadSessions();
-          }
-        },
-      ]
-    );
-  }
-
-  function showDeleteModal(session: Session) {
-    showModal(
-      "Delete collection",
-      `<p>Delete "<strong>${esc(session.name)}</strong>"?</p>`,
-      [
-        { label: "Cancel", cls: "btn-ghost", action: hideModal },
-        {
-          label: "Delete", cls: "btn-danger", action: async () => {
-            pushUndo({ type: "delete", sessions: [deepClone(session)], oldOrder: sessions.map(s => s.id) });
-            hideModal();
-            await send({ type: "deleteSession", id: session.id });
-            toast("Collection deleted", undefined);
-            if (view === session.id) dispatch({ type: "SET_VIEW", view: "current" });
-            await onLoadSessions();
-          }
-        },
-      ]
-    );
-  }
-
   // ─── Drag and drop (reorder) ──────────────────────────────────────────────
 
   function onDragEnd({ active, over }: DragEndEvent) {
-    setActiveDragId(null);
     if (!over || active.id === over.id) return;
     const oldIndex = sessions.findIndex(s => s.id === active.id);
     const newIndex = sessions.findIndex(s => s.id === over.id);
@@ -243,21 +147,8 @@ export function Sidebar({ onLoadSessions, counts }: Props) {
       )
     : sessions;
 
-  const activeSession = activeDragId ? sessions.find(s => s.id === activeDragId) : null;
-
   return (
     <aside className="sidebar">
-      {ctxMenu && (
-        <ContextMenu
-          session={ctxMenu.session}
-          x={ctxMenu.x}
-          y={ctxMenu.y}
-          onClose={() => setCtxMenu(null)}
-          onRename={() => showRenameModal(ctxMenu.session)}
-          onDelete={() => showDeleteModal(ctxMenu.session)}
-        />
-      )}
-
       <section className="sidebar-section">
         <div className="sidebar-label">TABS</div>
 
@@ -336,43 +227,21 @@ export function Sidebar({ onLoadSessions, counts }: Props) {
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            onDragStart={({ active }) => setActiveDragId(active.id.toString())}
+            modifiers={[({ transform }) => ({ ...transform, x: 0 })]}
             onDragEnd={onDragEnd}
-            onDragCancel={() => setActiveDragId(null)}
           >
             <SortableContext items={sessionIds} strategy={verticalListSortingStrategy}>
               {filtered.map(session => (
                 <SortableSessionItem
                   key={session.id}
                   session={session}
-                  isActive={activeDragId === session.id}
                   isSelected={selectedSessionIds.has(session.id)}
                   isCurrentView={view === session.id}
                   query={query}
                   onClick={e => handleSessionClick(e, session, sessionIds)}
-                  onContextMenu={e => {
-                    e.preventDefault();
-                    setCtxMenu({ session, x: e.clientX, y: e.clientY });
-                  }}
-                  onPencilClick={e => setCtxMenu({ session, x: e.clientX, y: e.clientY })}
                 />
               ))}
             </SortableContext>
-
-            <DragOverlay dropAnimation={null}>
-              {activeSession && (
-                <div className="session-nav-item active" style={{ opacity: 0.85, boxShadow: "0 4px 12px rgba(0,0,0,0.4)" }}>
-                  <svg viewBox="0 0 16 16" fill="none">
-                    <rect x="1" y="2" width="14" height="12" rx="2" stroke="currentColor" strokeWidth="1.2"/>
-                    <line x1="1" y1="6" x2="15" y2="6" stroke="currentColor" strokeWidth="1.2"/>
-                  </svg>
-                  <div className="session-nav-text">
-                    <div className="session-nav-name">{activeSession.name}</div>
-                    <div className="session-nav-meta">{tabCountLabel(activeSession.tabCount ?? 0)}</div>
-                  </div>
-                </div>
-              )}
-            </DragOverlay>
           </DndContext>
         </div>
 
