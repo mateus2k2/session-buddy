@@ -517,12 +517,13 @@ browser.runtime.onMessage.addListener((request, sender) => {
       case "importSessions": {
         const newIds = [];
         for (const session of request.sessions) {
+          if (!Array.isArray(session.windows)) continue;
           session.id = generateId();
           await dbPut(session);
           newIds.push(session.id);
         }
-        await prependSessionOrder(newIds);
-        return { ok: true, count: request.sessions.length };
+        if (newIds.length > 0) await prependSessionOrder(newIds);
+        return { ok: true, count: newIds.length };
       }
 
       case "getHistory": {

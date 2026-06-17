@@ -31,7 +31,7 @@ export function App() {
 
   const loadSessions = useCallback(async () => {
     const sessions: Session[] = await send({ type: "getSessions" });
-    dispatch({ type: "SET_SESSIONS", sessions });
+    dispatch({ type: "SET_SESSIONS", sessions: sessions.filter(s => Array.isArray(s.windows)) });
   }, [dispatch]);
 
   const loadSidebarCounts = useCallback(async () => {
@@ -191,8 +191,9 @@ export function App() {
       try {
         const text = await file.text();
         const data = JSON.parse(text);
-        const sessions = Array.isArray(data) ? data : [data];
-        if (!sessions.length) throw new Error("empty");
+        const allSessions = Array.isArray(data) ? data : [data];
+        const sessions = allSessions.filter((s: Session) => s && typeof s === "object" && Array.isArray(s.windows));
+        if (!sessions.length) throw new Error("unsupported format");
         if (sessions.length === 1) {
           const defaultName = sessions[0].name || file.name.replace(/\.json$/i, "");
           showModal(
@@ -217,8 +218,11 @@ export function App() {
           toast(`Imported ${result.count} collections`);
           await loadSessions();
         }
-      } catch {
-        toast("Import failed — invalid JSON file");
+      } catch (err) {
+        const msg = err instanceof Error && err.message === "unsupported format"
+          ? "Import failed — unsupported file format"
+          : "Import failed — invalid JSON file";
+        toast(msg);
       }
     }
 

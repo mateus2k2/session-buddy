@@ -184,7 +184,8 @@ export function SessionView({ session, onLoadSessions }: Props) {
       try {
         const data = JSON.parse(await file.text());
         const sessions: Session[] = Array.isArray(data) ? data : [data];
-        const wins = sessions.flatMap(s => s.windows ?? []);
+        const wins = sessions.flatMap(s => Array.isArray(s.windows) ? s.windows : []);
+        if (!wins.length) { toast("Import failed — unsupported file format"); return; }
         await appendWindowsToSession(wins);
       } catch { toast("Import failed — invalid JSON"); }
     };
