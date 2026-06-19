@@ -28,6 +28,7 @@ export function App() {
   const { undo, redo } = useUndo();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [counts, setCounts] = useState<SidebarCounts>({ tabs: null, history: null, closed: null });
+  const [currentViewKey, setCurrentViewKey] = useState(0);
 
   const loadSessions = useCallback(async () => {
     const sessions: Session[] = await send({ type: "getSessions" });
@@ -47,6 +48,18 @@ export function App() {
   }, []);
 
   useEffect(() => { void loadSessions(); void loadSidebarCounts(); }, [loadSessions, loadSidebarCounts]);
+
+  // Reload sessions when a background auto-sync completes
+  useEffect(() => {
+    function onStorageChanged(changes: Record<string, browser.storage.StorageChange>, area: string) {
+      if (area === "local" && "_syncDone" in changes) {
+        void loadSessions();
+        void loadSidebarCounts();
+      }
+    }
+    browser.storage.onChanged.addListener(onStorageChanged);
+    return () => browser.storage.onChanged.removeListener(onStorageChanged);
+  }, [loadSessions, loadSidebarCounts]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -169,7 +182,23 @@ export function App() {
         // Enter — open session in a new window (no modifier, no selection)
         if (e.key === "Enter" && !hasTabSel && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
           e.preventDefault();
-          await send({ type: "openSession", id: session.id, mode: "newWindow" });
+          if (session.windows.length > 1) {
+            showModal(
+              "Open multiple windows",
+              `<p>This collection has <strong>${session.windows.length} windows</strong>. Opening it will open ${session.windows.length} browser windows. Continue?</p>`,
+              [
+                { label: "Cancel", cls: "btn-ghost", action: hideModal },
+                {
+                  label: "Open all", cls: "btn-primary", action: async () => {
+                    hideModal();
+                    await send({ type: "openSession", id: session.id, mode: "newWindow" });
+                  }
+                },
+              ]
+            );
+          } else {
+            await send({ type: "openSession", id: session.id, mode: "newWindow" });
+          }
           return;
         }
       }
@@ -290,12 +319,13 @@ export function App() {
   }, [loadSessions, toast]);
 
   async function openSettings() {
-    const cfg = await send({ type: "getConfig" }) as { historyInterval?: number; historyLimit?: number; ignoreExtensionTabs?: boolean; ifSupportTst?: boolean; tstDelay?: number };
+    const cfg = await send({ type: "getConfig" }) as { historyInterval?: number; historyLimit?: number; ignoreExtensionTabs?: boolean; ifSupportTst?: boolean; tstDelay?: number; cloudAutoSync?: boolean };
     const interval = cfg?.historyInterval ?? 5;
     const limit = cfg?.historyLimit ?? 50;
     const ignoreExt = cfg?.ignoreExtensionTabs !== false;
     const ifSupportTst = cfg?.ifSupportTst === true;
     const tstDelay = cfg?.tstDelay ?? 0;
+    const cloudAutoSync = cfg?.cloudAutoSync !== false;
 
     showModal(
       "Settings",
@@ -326,6 +356,13 @@ export function App() {
           <span class="settings-hint">Delay between tab openings so Tree Style Tab can register each parent (0–2000)</span>
           <input type="number" id="cfg-tst-delay" value="${tstDelay}" min="0" max="2000" step="10" />
         </label>
+        <div class="settings-checkbox-row">
+          <label class="settings-checkbox-label" for="cfg-cloud-auto-sync">
+            <input type="checkbox" id="cfg-cloud-auto-sync"${cloudAutoSync ? " checked" : ""} />
+            Auto-sync with Google Drive
+          </label>
+          <span class="settings-hint">Automatically sync collections every 30 minutes and after changes (requires Google Drive sign-in)</span>
+        </div>
         <div class="settings-group">
           <span class="settings-label">Backup</span>
           <div class="settings-row">
@@ -342,13 +379,14 @@ export function App() {
         { label: "Cancel", cls: "btn-ghost", action: hideModal },
         {
           label: "Save", cls: "btn-primary", action: async () => {
-            const newInterval    = parseInt((document.getElementById("cfg-interval") as HTMLInputElement).value) || 0;
-            const newLimit       = parseInt((document.getElementById("cfg-limit") as HTMLInputElement).value) || 50;
-            const newIgnoreExt   = (document.getElementById("cfg-ignore-ext") as HTMLInputElement).checked;
-            const newIfSupportTst = (document.getElementById("cfg-tst") as HTMLInputElement).checked;
-            const newTstDelay    = parseInt((document.getElementById("cfg-tst-delay") as HTMLInputElement).value) || 0;
+            const newInterval      = parseInt((document.getElementById("cfg-interval") as HTMLInputElement).value) || 0;
+            const newLimit         = parseInt((document.getElementById("cfg-limit") as HTMLInputElement).value) || 50;
+            const newIgnoreExt     = (document.getElementById("cfg-ignore-ext") as HTMLInputElement).checked;
+            const newIfSupportTst  = (document.getElementById("cfg-tst") as HTMLInputElement).checked;
+            const newTstDelay      = parseInt((document.getElementById("cfg-tst-delay") as HTMLInputElement).value) || 0;
+            const newCloudAutoSync = (document.getElementById("cfg-cloud-auto-sync") as HTMLInputElement).checked;
             hideModal();
-            await send({ type: "saveConfig", config: { historyInterval: newInterval, historyLimit: newLimit, ignoreExtensionTabs: newIgnoreExt, ifSupportTst: newIfSupportTst, tstDelay: newTstDelay } });
+            await send({ type: "saveConfig", config: { historyInterval: newInterval, historyLimit: newLimit, ignoreExtensionTabs: newIgnoreExt, ifSupportTst: newIfSupportTst, tstDelay: newTstDelay, cloudAutoSync: newCloudAutoSync } });
             toast("Settings saved");
           }
         },
@@ -464,7 +502,7 @@ export function App() {
     if (state.view === "cookies") {
       return <CookieView />;
     }
-    return <CurrentView onLoadSessions={loadSessions} />;
+    return <CurrentView onLoadSessions={loadSessions} refreshKey={currentViewKey} />;
   }
 
   return (
@@ -489,7 +527,7 @@ export function App() {
         </main>
       </div>
 
-      <SelectionBar onLoadSessions={loadSessions} />
+      <SelectionBar onLoadSessions={loadSessions} onRefreshCurrent={() => setCurrentViewKey(k => k + 1)} />
 
       {/* Hidden file inputs for import */}
       <input type="file" id="import-json-input"   accept=".json,application/json" style={{ display: "none" }} />

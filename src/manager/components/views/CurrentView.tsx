@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useApp } from "../../context/AppContext";
 import { send } from "../../utils/messaging";
-import { tabCountLabel, esc, genId } from "../../utils/helpers";
+import { tabCountLabel, esc } from "../../utils/helpers";
+import { smartImportText } from "../../utils/import";
 import { WindowBlock } from "./WindowBlock";
-import type { Window as SessionWindow, TabRenderEntry } from "../../context/types";
+import type { Window as SessionWindow, Session, TabRenderEntry } from "../../context/types";
 
 interface CurrentState {
   windows: SessionWindow[];
@@ -13,6 +14,7 @@ interface CurrentState {
 
 interface Props {
   onLoadSessions: () => Promise<void>;
+  refreshKey?: number;
 }
 
 function Dropdown({
@@ -59,7 +61,7 @@ function Dropdown({
   );
 }
 
-export function CurrentView({ onLoadSessions }: Props) {
+export function CurrentView({ onLoadSessions, refreshKey }: Props) {
   const { state, dispatch, showModal, hideModal, toast } = useApp();
   const [data, setData] = useState<CurrentState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,6 +73,7 @@ export function CurrentView({ onLoadSessions }: Props) {
     });
   }, []);
 
+  // Initial load — shows the spinner once.
   const fetchState = useCallback(async () => {
     setLoading(true);
     try {
@@ -83,7 +86,39 @@ export function CurrentView({ onLoadSessions }: Props) {
     }
   }, []);
 
+  // Silent refresh — no spinner, no flicker; used for background-pushed updates.
+  const fetchStateSilent = useCallback(async () => {
+    try {
+      const cur = await send({ type: "getCurrentState" }) as CurrentState;
+      setData(cur);
+    } catch { /* non-fatal */ }
+  }, []);
+
+  // Initial load only (fetchState is stable, so this runs once on mount).
   useEffect(() => { void fetchState(); }, [fetchState]);
+
+  // Re-fetch silently when the caller signals a change (e.g. after closing browser tabs).
+  useEffect(() => { if (refreshKey) void fetchStateSilent(); }, [fetchStateSilent, refreshKey]);
+
+  // The background writes a ping to storage.local on every tab event.
+  // storage.onChanged fires in ALL extension contexts including private windows,
+  // so this works regardless of incognito state.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    function onStorageChanged(changes: Record<string, browser.storage.StorageChange>, area: string) {
+      if (area === "local" && "_tabsChanged" in changes) {
+        clearTimeout(timer);
+        timer = setTimeout(() => { void fetchStateSilent(); }, 50);
+      }
+    }
+
+    browser.storage.onChanged.addListener(onStorageChanged);
+    return () => {
+      clearTimeout(timer);
+      browser.storage.onChanged.removeListener(onStorageChanged);
+    };
+  }, [fetchStateSilent]);
 
   useEffect(() => {
     const order: TabRenderEntry[] = [];
@@ -139,31 +174,42 @@ export function CurrentView({ onLoadSessions }: Props) {
     el?.click();
   }
 
-  async function handleImportUrlList() {
+  function handlePasteImport() {
     showModal(
-      "Import from URL list",
-      `<textarea id="url-list-input" rows="8" placeholder="Paste one URL per line…"></textarea>`,
+      "Import from text",
+      `<textarea id="paste-import-input" rows="8" placeholder="Paste URLs, JSON, or text export…"></textarea>`,
       [
         { label: "Cancel", cls: "btn-ghost", action: hideModal },
         {
           label: "Import", cls: "btn-primary", action: async () => {
-            const ta = document.getElementById("url-list-input") as HTMLTextAreaElement;
-            const urls = ta.value.split("\n").map(u => u.trim()).filter(u => u.startsWith("http"));
+            const ta = document.getElementById("paste-import-input") as HTMLTextAreaElement;
+            const sessions = smartImportText(ta.value);
+            if (!sessions.length) { toast("No valid data found"); return; }
             hideModal();
-            if (!urls.length) { toast("No valid URLs found"); return; }
-            const session: Session = {
-              id: genId(),
-              name: new Date().toLocaleString(),
-              date: Date.now(),
-              windowCount: 1,
-              tabCount: urls.length,
-              windows: [{
-                tabs: urls.map((url, i) => ({ index: i, url, title: url })),
-              }],
-            };
-            await send({ type: "importSessions", sessions: [session] });
-            toast("Imported");
-            await onLoadSessions();
+            if (sessions.length === 1) {
+              const defaultName = (sessions[0] as Session).name || new Date().toLocaleString();
+              showModal(
+                "Name this collection",
+                `<input type="text" id="import-name-input" value="${esc(defaultName)}" placeholder="Collection name" />`,
+                [
+                  { label: "Cancel", cls: "btn-ghost", action: hideModal },
+                  {
+                    label: "Import", cls: "btn-primary", action: async () => {
+                      const name = (document.getElementById("import-name-input") as HTMLInputElement).value.trim() || defaultName;
+                      (sessions[0] as Session).name = name;
+                      hideModal();
+                      await send({ type: "importSessions", sessions });
+                      toast("Imported 1 collection");
+                      await onLoadSessions();
+                    }
+                  },
+                ]
+              );
+            } else {
+              const result = await send({ type: "importSessions", sessions }) as { count: number };
+              toast(`Imported ${result.count} collections`);
+              await onLoadSessions();
+            }
           }
         },
       ]
@@ -200,7 +246,7 @@ export function CurrentView({ onLoadSessions }: Props) {
             items={[
               { label: "Import from JSON", action: handleImportJson },
               { label: "Import from text", action: handleImportText },
-              { label: "Import from URL list", action: () => void handleImportUrlList() },
+              { label: "Paste to import", action: handlePasteImport },
             ]}
           />
         </div>
@@ -223,6 +269,7 @@ export function CurrentView({ onLoadSessions }: Props) {
               selectable={true}
               isLiveTab={true}
               treeEnabled={treeEnabled}
+              onCloseWindow={win.id != null ? async () => { await fetchState(); } : undefined}
             />
           ))
         )}

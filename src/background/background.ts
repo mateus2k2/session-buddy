@@ -74,7 +74,7 @@ function dbDeleteAll() {
 
 // ─── History IndexedDB ────────────────────────────────────────────────────────
 
-const DEFAULT_CONFIG = { historyInterval: 5, historyLimit: 50, ignoreExtensionTabs: true, ifSupportTst: false, tstDelay: 0 };
+const DEFAULT_CONFIG = { historyInterval: 5, historyLimit: 50, ignoreExtensionTabs: true, ifSupportTst: false, tstDelay: 0, cloudAutoSync: true };
 
 async function getConfig() {
   const stored = await browser.storage.local.get(DEFAULT_CONFIG);
@@ -438,6 +438,7 @@ browser.runtime.onMessage.addListener((request, sender) => {
         const session = await captureCurrentSession(request.name, request.scope);
         await dbPut(session);
         await prependSessionOrder([session.id]);
+        scheduleAutoSyncDirty();
         return { ok: true, session };
       }
 
@@ -466,6 +467,7 @@ browser.runtime.onMessage.addListener((request, sender) => {
         const { syncRemovedQueue = [] } = await browser.storage.local.get({ syncRemovedQueue: [] });
         syncRemovedQueue.push(request.id);
         await browser.storage.local.set({ syncRemovedQueue });
+        scheduleAutoSyncDirty();
         return { ok: true };
       }
 
@@ -480,7 +482,9 @@ browser.runtime.onMessage.addListener((request, sender) => {
         const session = await dbGet(request.id);
         if (!session) return { ok: false };
         session.name = request.name;
+        session.lastEditedTime = Date.now();
         await dbPut(session);
+        scheduleAutoSyncDirty();
         return { ok: true, session };
       }
 
@@ -492,13 +496,15 @@ browser.runtime.onMessage.addListener((request, sender) => {
       }
 
       case "getCurrentState": {
-        const live = await captureCurrentSession("", "all");
+        // Skip favicon data-URL conversion — raw URLs from the browser work directly in the UI
+        const live = await captureCurrentSession("", "all", { fetchFavicons: false });
         return live;
       }
 
       case "updateSession": {
         request.session.lastEditedTime = Date.now();
         await dbPut(request.session);
+        scheduleAutoSyncDirty();
         return { ok: true };
       }
 
@@ -511,6 +517,7 @@ browser.runtime.onMessage.addListener((request, sender) => {
         captured.date = existing.date;
         captured.lastEditedTime = Date.now();
         await dbPut(captured);
+        scheduleAutoSyncDirty();
         return { ok: true };
       }
 
@@ -519,10 +526,12 @@ browser.runtime.onMessage.addListener((request, sender) => {
         for (const session of request.sessions) {
           if (!Array.isArray(session.windows)) continue;
           session.id = generateId();
+          session.lastEditedTime = Date.now();
           await dbPut(session);
           newIds.push(session.id);
         }
         if (newIds.length > 0) await prependSessionOrder(newIds);
+        scheduleAutoSyncDirty();
         return { ok: true, count: newIds.length };
       }
 
@@ -575,20 +584,32 @@ browser.runtime.onMessage.addListener((request, sender) => {
       case "saveConfig": {
         await browser.storage.local.set(request.config);
         await setupAlarm();
+        await setupCloudAlarm();
         return { ok: true };
       }
 
       case "exportBackup": {
-        const [sessions, history, config] = await Promise.all([
+        const [sessions, history, config, syncStore] = await Promise.all([
           dbGetAll(),
           dbHistoryGetAll(),
           getConfig(),
+          getCloudStore(),
         ]);
-        return { sessions, history, config };
+        // Include sync credentials so they survive a backup/restore cycle
+        const sync = {
+          syncClientId:     syncStore.syncClientId     || undefined,
+          syncClientSecret: syncStore.syncClientSecret || undefined,
+          syncRefreshToken: syncStore.syncRefreshToken || undefined,
+          syncAccessToken:  syncStore.syncAccessToken  || undefined,
+          syncTokenExpiry:  syncStore.syncTokenExpiry  || undefined,
+          syncEmail:        syncStore.syncEmail        || undefined,
+          syncLastSyncTime: syncStore.syncLastSyncTime || undefined,
+        };
+        return { sessions, history, config, sync };
       }
 
       case "importBackup": {
-        const { sessions = [], history = [], config = {}, merge = false } = request;
+        const { sessions = [], history = [], config = {}, sync = {}, merge = false } = request;
         if (!merge) {
           await dbDeleteAll();
           await dbHistoryDeleteAll();
@@ -612,6 +633,14 @@ browser.runtime.onMessage.addListener((request, sender) => {
         if (Object.keys(config).length > 0) {
           await browser.storage.local.set(config);
           await setupAlarm();
+        }
+        // Restore sync credentials when present (skip empty strings to avoid clobbering existing auth)
+        const syncFields = {};
+        for (const [k, v] of Object.entries(sync)) {
+          if (v !== undefined && v !== "" && v !== 0) syncFields[k] = v;
+        }
+        if (Object.keys(syncFields).length > 0) {
+          await browser.storage.local.set(syncFields);
         }
         return { ok: true };
       }
@@ -713,11 +742,31 @@ async function commitHistory(type) {
   }
 }
 
+// Push a lightweight notification to open manager pages by writing a ping to
+// storage.local. browser.storage.onChanged fires in ALL extension contexts
+// (including private-window extension pages) so this reliably reaches the manager
+// regardless of incognito state — no tab querying or message routing needed.
+let _notifyTimer = null;
+function scheduleNotifyManager() {
+  clearTimeout(_notifyTimer);
+  _notifyTimer = setTimeout(() => {
+    browser.storage.local.set({ _tabsChanged: Date.now() }).catch(() => {});
+  }, 300);
+}
+
 // Keep snapshot fresh on tab/window changes (debounced — many events fire per page load)
-browser.tabs.onCreated.addListener(scheduleSnapshot);
-browser.tabs.onRemoved.addListener(scheduleSnapshot);
-browser.tabs.onUpdated.addListener(scheduleSnapshot);
-if (windowsSupported) browser.windows.onCreated.addListener(scheduleSnapshot);
+browser.tabs.onCreated.addListener(() => { scheduleSnapshot(); scheduleNotifyManager(); });
+browser.tabs.onRemoved.addListener(() => { scheduleSnapshot(); scheduleNotifyManager(); });
+browser.tabs.onUpdated.addListener((_id, changeInfo) => {
+  scheduleSnapshot();
+  if (changeInfo.status === "complete" || "url" in changeInfo || "title" in changeInfo || "favIconUrl" in changeInfo || "pinned" in changeInfo) {
+    scheduleNotifyManager();
+  }
+});
+browser.tabs.onMoved.addListener(() => { scheduleSnapshot(); scheduleNotifyManager(); });
+browser.tabs.onAttached.addListener(() => { scheduleSnapshot(); scheduleNotifyManager(); });
+browser.tabs.onDetached.addListener(() => { scheduleSnapshot(); scheduleNotifyManager(); });
+if (windowsSupported) browser.windows.onCreated.addListener(() => { scheduleSnapshot(); scheduleNotifyManager(); });
 
 // Save history when all windows close (browser closing)
 if (windowsSupported) browser.windows.onRemoved.addListener(async () => {
@@ -731,6 +780,7 @@ if (windowsSupported) browser.windows.onRemoved.addListener(async () => {
     await commitHistory("browserClosed");
   } else {
     scheduleSnapshot();
+    scheduleNotifyManager();
   }
 });
 
@@ -743,14 +793,44 @@ async function setupAlarm() {
   }
 }
 setupAlarm();
+
+// Create a recurring 30-minute sync alarm only when the user is signed in AND auto-sync is on.
+async function setupCloudAlarm() {
+  const [store, cfg] = await Promise.all([getCloudStore(), getConfig()]);
+  if (store.syncRefreshToken && cfg.cloudAutoSync) {
+    const existing = await browser.alarms.get("cloudPeriodicSync");
+    if (!existing) browser.alarms.create("cloudPeriodicSync", { periodInMinutes: 30 });
+  } else {
+    await browser.alarms.clear("cloudPeriodicSync");
+    await browser.alarms.clear("cloudDirtySync");
+  }
+}
+setupCloudAlarm();
+
+// Debounced dirty-sync: fires 5 minutes after the last local change so rapid
+// edits are batched into a single upload instead of one upload per keystroke.
+async function scheduleAutoSyncDirty() {
+  const cfg = await getConfig();
+  if (!cfg.cloudAutoSync) return;
+  // Replacing an existing alarm with the same name resets its timer — that's our debounce.
+  browser.alarms.create("cloudDirtySync", { delayInMinutes: 5 });
+}
+
 browser.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== "historyAutoSave") return;
-  await ensureInit();
-  // Capture immediately (skip debounce) so we commit the freshest state
-  try {
-    lastSnapshot = await captureCurrentSession("", "all", { fetchFavicons: false });
-  } catch {}
-  await commitHistory("autoSave");
+  if (alarm.name === "historyAutoSave") {
+    await ensureInit();
+    try {
+      lastSnapshot = await captureCurrentSession("", "all", { fetchFavicons: false });
+    } catch {}
+    await commitHistory("autoSave");
+    return;
+  }
+  if (alarm.name === "cloudPeriodicSync" || alarm.name === "cloudDirtySync") {
+    await ensureInit();
+    const [store, cfg] = await Promise.all([getCloudStore(), getConfig()]);
+    if (!store.syncRefreshToken || !cfg.cloudAutoSync || _cloudSyncing) return;
+    syncCloud().catch(() => {});
+  }
 });
 
 // ─── Google Drive Cloud Sync ─────────────────────────────────────────────────
@@ -818,6 +898,9 @@ async function cloudSignIn(clientId, clientSecret) {
     syncTokenExpiry: Date.now() + tokens.expires_in * 1000,
     syncEmail: email, syncLastSyncTime: 0, syncRemovedQueue: []
   });
+  await setupCloudAlarm();
+  // Kick off an initial sync immediately so the user sees their cloud data right away
+  syncCloud().catch(() => {});
   return email;
 }
 
@@ -830,6 +913,8 @@ async function cloudSignOut() {
       body: JSON.stringify({ token })
     }).catch(() => {});
   }
+  await browser.alarms.clear("cloudPeriodicSync");
+  await browser.alarms.clear("cloudDirtySync");
   await browser.storage.local.remove([
     "syncAccessToken", "syncRefreshToken", "syncTokenExpiry",
     "syncEmail", "syncLastSyncTime", "syncRemovedQueue", "syncFolderId"
@@ -916,6 +1001,28 @@ async function driveDelete(fileId) {
   });
 }
 
+// Tombstone file tracks all IDs ever deleted so other devices don't re-download them.
+const TOMBSTONES_FILENAME = "tabkeeper-tombstones";
+
+async function driveUploadTombstones(ids, fileId) {
+  const token = await getValidAccessToken();
+  const folderId = await driveGetOrCreateFolder();
+  const form = new FormData();
+  form.append("metadata", new Blob([JSON.stringify({
+    name: TOMBSTONES_FILENAME,
+    mimeType: "application/json",
+    ...(!fileId && { parents: [folderId] })
+  })], { type: "application/json" }));
+  form.append("file", new Blob([JSON.stringify({ ids })], { type: "application/json" }));
+  const resp = await fetch(
+    `https://www.googleapis.com/upload/drive/v3/files${fileId ? `/${fileId}` : ""}?uploadType=multipart`,
+    { method: fileId ? "PATCH" : "POST", headers: { Authorization: `Bearer ${token}` }, body: form }
+  );
+  const json = await resp.json();
+  if (json.error) throw new Error(json.error.message);
+  return json.id;
+}
+
 let _cloudSyncing = false;
 
 async function syncCloud() {
@@ -926,25 +1033,54 @@ async function syncCloud() {
     if (!store.syncRefreshToken) throw new Error("Not signed in to Google");
 
     const [driveFiles, localSessions] = await Promise.all([driveList(), dbGetAll()]);
-    const driveMap = Object.fromEntries(driveFiles.map(f => [f.name, f]));
-    const localMap = Object.fromEntries(localSessions.map(s => [s.id, s]));
     const now = Date.now();
 
-    for (const file of driveFiles) {
+    // Split tombstones file from session files
+    const tombstonesFile = driveFiles.find(f => f.name === TOMBSTONES_FILENAME);
+    const sessionFiles = driveFiles.filter(f => f.name !== TOMBSTONES_FILENAME);
+
+    // Merge remote tombstones with local removal queue
+    let remoteTombstoneIds: string[] = [];
+    if (tombstonesFile) {
+      const data = await driveDownload(tombstonesFile.id).catch(() => null);
+      remoteTombstoneIds = Array.isArray(data?.ids) ? data.ids : [];
+    }
+    const allTombstoneIds = new Set([...remoteTombstoneIds, ...(store.syncRemovedQueue || [])]);
+
+    const driveMap = Object.fromEntries(sessionFiles.map(f => [f.name, f]));
+    const localMap = Object.fromEntries(localSessions.map(s => [s.id, s]));
+
+    // Step 1: Apply tombstones — purge deleted sessions from both sides
+    for (const id of allTombstoneIds) {
+      if (localMap[id]) {
+        await dbDelete(id);
+        await removeFromSessionOrder([id]);
+        delete localMap[id];
+      }
+      if (driveMap[id]) {
+        await driveDelete(driveMap[id].id);
+        delete driveMap[id];
+      }
+    }
+
+    // Step 2: Download sessions that are new or updated on Drive
+    for (const file of Object.values(driveMap)) {
       const driveTime = parseInt(file.appProperties?.lastEditedTime || "0");
       const local = localMap[file.name];
       const localTime = local?.lastEditedTime || local?.date || 0;
       if (!local || driveTime > localTime) {
         const session = await driveDownload(file.id);
-        if (session?.id) {
-          session.lastEditedTime = driveTime;
+        if (session?.id && !allTombstoneIds.has(session.id)) {
+          session.lastEditedTime = driveTime || session.date;
           await dbPut(session);
           if (!local) await prependSessionOrder([session.id]);
+          localMap[session.id] = session;
         }
       }
     }
 
-    for (const session of localSessions) {
+    // Step 3: Upload sessions that are new or updated locally
+    for (const session of Object.values(localMap)) {
       const file = driveMap[session.id];
       const localTime = session.lastEditedTime || session.date || 0;
       const driveTime = parseInt(file?.appProperties?.lastEditedTime || "0");
@@ -953,12 +1089,13 @@ async function syncCloud() {
       }
     }
 
-    for (const id of store.syncRemovedQueue) {
-      const file = driveMap[id];
-      if (file) await driveDelete(file.id);
+    // Step 4: Persist tombstones on Drive so other devices respect deletions
+    if (allTombstoneIds.size > 0) {
+      await driveUploadTombstones([...allTombstoneIds], tombstonesFile?.id ?? "");
     }
 
-    await browser.storage.local.set({ syncLastSyncTime: now, syncRemovedQueue: [] });
+    // Notify the manager page to reload sessions (storage.onChanged fires in all contexts)
+    await browser.storage.local.set({ syncLastSyncTime: now, syncRemovedQueue: [], _syncDone: now });
     return { ok: true, time: now };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };

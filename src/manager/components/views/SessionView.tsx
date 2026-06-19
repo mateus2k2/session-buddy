@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../../context/AppContext";
 import { send } from "../../utils/messaging";
-import { formatDate, tabCountLabel, deepClone, esc } from "../../utils/helpers";
+import { formatDate, tabCountLabel, deepClone, esc, genId } from "../../utils/helpers";
 import { exportSessionAsJson, exportSessionAsText } from "../../utils/download";
-import { parseTextImport } from "../../utils/import";
+import { parseTextImport, smartImportText } from "../../utils/import";
 import { SessionDnD } from "../dnd/SessionDnD";
 import { WindowBlock } from "./WindowBlock";
 import type { Session, TabRenderEntry } from "../../context/types";
@@ -97,8 +97,24 @@ export function SessionView({ session, onLoadSessions }: Props) {
     return () => document.removeEventListener("click", close);
   }, []);
 
-  async function openSession(mode: string) {
-    await send({ type: "openSession", id: session.id, mode });
+  function openSession(mode: string) {
+    if (mode === "newWindow" && session.windows.length > 1) {
+      showModal(
+        "Open multiple windows",
+        `<p>This collection has <strong>${session.windows.length} windows</strong>. Opening it will open ${session.windows.length} browser windows. Continue?</p>`,
+        [
+          { label: "Cancel", cls: "btn-ghost", action: hideModal },
+          {
+            label: "Open all", cls: "btn-primary", action: async () => {
+              hideModal();
+              await send({ type: "openSession", id: session.id, mode });
+            }
+          },
+        ]
+      );
+    } else {
+      void send({ type: "openSession", id: session.id, mode });
+    }
   }
 
   function showRenameModal() {
@@ -208,20 +224,21 @@ export function SessionView({ session, onLoadSessions }: Props) {
     input.click();
   }
 
-  function importUrlListIntoCollection() {
+  function importPasteIntoCollection() {
     showModal(
-      "Import URL list into collection",
-      `<textarea id="import-url-list" rows="8" placeholder="Paste one URL per line…"></textarea>`,
+      "Paste to import into collection",
+      `<textarea id="import-url-list" rows="8" placeholder="Paste URLs, JSON, or text export…"></textarea>`,
       [
         { label: "Cancel", cls: "btn-ghost", action: hideModal },
         {
           label: "Import", cls: "btn-primary", action: async () => {
             const ta = document.getElementById("import-url-list") as HTMLTextAreaElement;
-            const urls = ta.value.split("\n").map(u => u.trim()).filter(u => u.startsWith("http"));
+            const sessions = smartImportText(ta.value);
             hideModal();
-            if (!urls.length) { toast("No valid URLs found"); return; }
-            const win = { tabs: urls.map((url, i) => ({ index: i, url, title: url, id: undefined })) };
-            await appendWindowsToSession([win]);
+            if (!sessions.length) { toast("No valid data found"); return; }
+            const wins = sessions.flatMap(s => Array.isArray(s.windows) ? s.windows : []);
+            if (!wins.length) { toast("No valid data found"); return; }
+            await appendWindowsToSession(wins);
           }
         },
       ]
@@ -258,9 +275,9 @@ export function SessionView({ session, onLoadSessions }: Props) {
             { label: "Duplicate", action: () => void duplicateSession() },
             { label: "Replace with current browser", action: showReplaceModal },
             { separator: true },
-            { label: "Import JSON into collection",     action: importJsonIntoCollection },
-            { label: "Import text into collection",     action: importTextIntoCollection },
-            { label: "Import URL list into collection", action: importUrlListIntoCollection },
+            { label: "Import from JSON",     action: importJsonIntoCollection },
+            { label: "Import from text",     action: importTextIntoCollection },
+            { label: "Paste to import", action: importPasteIntoCollection },
             { separator: true },
             { label: "Delete", action: showDeleteModal, danger: true },
           ]} />

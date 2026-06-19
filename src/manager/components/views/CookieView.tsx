@@ -211,6 +211,9 @@ export function CookieView() {
   const [includeTabs, setIncludeTabs] = useState(true);
   const [expandedDomains, setExpandedDomains] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
+  // Tracks the previous live state so refreshLive can distinguish user-removed
+  // tabs from brand-new tabs that just appeared in the private window.
+  const prevLiveRef = useRef<SessionWindow[]>([]);
 
   const fetchLiveWins = useCallback(async (): Promise<SessionWindow[]> => {
     if (typeof browser.windows === "undefined") return [];
@@ -227,6 +230,7 @@ export function CookieView() {
         browser.extension.isAllowedIncognitoAccess().catch(() => false),
         getPrivateCookies(),
       ]);
+      prevLiveRef.current = mapped;
       setPrivOpen(mapped.length > 0);
       setLiveWins(mapped);
       setEditableWins(deepClone(mapped));
@@ -237,49 +241,75 @@ export function CookieView() {
     }
   }, [fetchLiveWins]);
 
-  // Event-triggered refresh — updates live state but preserves user's edits:
-  // removes windows that closed, adds newly opened windows, leaves existing edits alone
+  // Event-triggered refresh — merges live changes into editableWins while preserving
+  // tabs the user manually removed. Logic per window:
+  //   user-removed = was in prevLive but not in editable (user deleted it)
+  //   new editable  = newLive tabs minus user-removed tabs
   const refreshLive = useCallback(async () => {
     const [mapped, cookieList] = await Promise.all([fetchLiveWins(), getPrivateCookies()]);
+    const prevLive = prevLiveRef.current;
+    prevLiveRef.current = mapped;
     setPrivOpen(mapped.length > 0);
     setLiveWins(mapped);
     setCookies(cookieList);
-    setEditableWins(prev => {
+    setEditableWins(prevEditable => {
       const liveIds = new Set(mapped.map(w => w.id));
-      const prevIds = new Set(prev.map(w => w.id));
-      // Keep existing editable windows that still exist in the browser
-      const kept = prev.filter(w => liveIds.has(w.id));
-      // Add any brand-new windows (not previously in editable list)
-      const added = mapped.filter(w => !prevIds.has(w.id));
-      return [...kept, ...added];
+      return [
+        // Existing windows: add new live tabs, drop closed tabs, keep user removals
+        ...prevEditable
+          .filter(w => liveIds.has(w.id))
+          .map(editWin => {
+            const newLiveWin = mapped.find(w => w.id === editWin.id);
+            if (!newLiveWin) return editWin;
+            const prevLiveWin = prevLive.find(w => w.id === editWin.id);
+            const prevLiveTabIds = new Set(prevLiveWin?.tabs.map(t => t.id) ?? []);
+            const editTabIds = new Set(editWin.tabs.map(t => t.id));
+            // Tabs the user manually removed from the editable list
+            const userRemovedIds = new Set([...prevLiveTabIds].filter(id => !editTabIds.has(id)));
+            const newTabs = newLiveWin.tabs.filter(t => !userRemovedIds.has(t.id));
+            return { ...editWin, tabs: newTabs };
+          }),
+        // Brand-new windows not previously tracked
+        ...mapped.filter(w => !prevEditable.some(e => e.id === w.id)),
+      ];
     });
   }, [fetchLiveWins]);
 
   useEffect(() => { void fetchData(); }, [fetchData]);
 
-  // Re-fetch when private windows or their tabs change, preserving edits
+  // The background writes _tabsChanged to storage.local on every tab/window event.
+  // storage.onChanged fires in all extension contexts including private-window pages,
+  // so this is the only reliable way to receive private window events here.
+  // cookies.onChanged fires directly in extension pages for all cookie stores.
   useEffect(() => {
-    function onWindowCreated(win: browser.windows.Window) {
-      if (win.incognito) void refreshLive();
+    let tabTimer: ReturnType<typeof setTimeout> | undefined;
+    let cookieTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function onStorageChanged(changes: Record<string, browser.storage.StorageChange>, area: string) {
+      if (area === "local" && "_tabsChanged" in changes) {
+        clearTimeout(tabTimer);
+        tabTimer = setTimeout(() => { void refreshLive(); }, 50);
+      }
     }
-    function onWindowRemoved() {
-      void refreshLive();
+
+    function onCookieChanged() {
+      clearTimeout(cookieTimer);
+      cookieTimer = setTimeout(async () => {
+        try {
+          const list = await getPrivateCookies();
+          setCookies(list);
+        } catch { /* non-fatal */ }
+      }, 100);
     }
-    function onTabCreated(tab: browser.tabs.Tab) {
-      if (tab.incognito) void refreshLive();
-    }
-    function onTabRemoved(_: number, info: { isWindowClosing: boolean }) {
-      if (!info.isWindowClosing) void refreshLive();
-    }
-    browser.windows.onCreated.addListener(onWindowCreated);
-    browser.windows.onRemoved.addListener(onWindowRemoved);
-    browser.tabs.onCreated.addListener(onTabCreated);
-    browser.tabs.onRemoved.addListener(onTabRemoved);
+
+    browser.storage.onChanged.addListener(onStorageChanged);
+    browser.cookies.onChanged.addListener(onCookieChanged);
+
     return () => {
-      browser.windows.onCreated.removeListener(onWindowCreated);
-      browser.windows.onRemoved.removeListener(onWindowRemoved);
-      browser.tabs.onCreated.removeListener(onTabCreated);
-      browser.tabs.onRemoved.removeListener(onTabRemoved);
+      clearTimeout(tabTimer);
+      clearTimeout(cookieTimer);
+      browser.storage.onChanged.removeListener(onStorageChanged);
+      browser.cookies.onChanged.removeListener(onCookieChanged);
     };
   }, [refreshLive]);
 

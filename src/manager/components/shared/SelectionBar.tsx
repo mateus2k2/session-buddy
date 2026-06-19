@@ -5,9 +5,10 @@ import type { Session, Tab, Window as SessionWindow } from "../../context/types"
 
 interface Props {
   onLoadSessions: () => Promise<void>;
+  onRefreshCurrent?: () => void;
 }
 
-export function SelectionBar({ onLoadSessions }: Props) {
+export function SelectionBar({ onLoadSessions, onRefreshCurrent }: Props) {
   const { state, dispatch, toast, pushUndo, showModal, hideModal } = useApp();
   const { selectedTabKeys, view, sessions } = state;
 
@@ -175,6 +176,17 @@ export function SelectionBar({ onLoadSessions }: Props) {
     );
   }
 
+  async function closeInBrowser() {
+    const tabIds = state.tabRenderOrder
+      .filter(r => selectedTabKeys.has(r.key) && r.tab.id != null)
+      .map(r => r.tab.id!);
+    if (!tabIds.length) { toast("No live tabs to close"); return; }
+    await browser.tabs.remove(tabIds);
+    clearSelection();
+    toast(`Closed ${tabIds.length} tab${tabIds.length !== 1 ? "s" : ""} in browser`);
+    onRefreshCurrent?.();
+  }
+
   async function saveLiveWindowsAsCollection() {
     const selectedWinIndices = new Set<number>();
     for (const key of selectedTabKeys) {
@@ -227,9 +239,14 @@ export function SelectionBar({ onLoadSessions }: Props) {
         </>
       )}
       {view === "current" && (
-        <button className="sel-btn" onClick={() => void saveLiveWindowsAsCollection()}>
-          Save as collection
-        </button>
+        <>
+          <button className="sel-btn" onClick={() => void saveLiveWindowsAsCollection()}>
+            Save as collection
+          </button>
+          <button className="sel-btn sel-remove" onClick={() => void closeInBrowser()}>
+            Close in browser
+          </button>
+        </>
       )}
       <button className="sel-btn" onClick={() => void copyUrls()}>Copy URLs</button>
       <button className="sel-btn sel-clear" onClick={clearSelection}>Clear</button>

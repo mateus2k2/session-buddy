@@ -16,11 +16,12 @@ interface Props {
   isDragging?: boolean;
   depth?: number;
   onUngroup?: () => void;
+  onEditTab?: () => void;
 }
 
 export function TabRow({
   tab, tabKey, groupColor, query, selectable = true, isLiveTab = false,
-  editMode = false, nodeRef, handleRef, isDragging = false, depth = 0, onUngroup,
+  editMode = false, nodeRef, handleRef, isDragging = false, depth = 0, onUngroup, onEditTab,
 }: Props) {
   const { state, dispatch } = useApp();
   const isSelected = state.selectedTabKeys.has(tabKey);
@@ -150,6 +151,18 @@ export function TabRow({
       )}
 
       {tab.pinned && <span className="tab-pin-badge">📌</span>}
+      {editMode && onEditTab && (
+        <button
+          className="tab-edit-btn"
+          title="Edit tab title and URL"
+          onClick={e => { e.stopPropagation(); onEditTab(); }}
+        >
+          <svg viewBox="0 0 16 16" fill="none" width="12" height="12">
+            <path d="M11 2.5a1.5 1.5 0 0 1 2.12 0l.38.38a1.5 1.5 0 0 1 0 2.12L5 13.5 2 14l.5-3L11 2.5Z"
+              stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+      )}
       {editMode && onUngroup && (tab.groupId ?? -1) !== -1 && (
         <button
           className="tab-ungroup-btn"

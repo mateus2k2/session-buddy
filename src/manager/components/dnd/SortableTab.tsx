@@ -16,10 +16,11 @@ interface Props {
   selectedKeys: Set<string>;
   depth?: number;
   onUngroup?: () => void;
+  onEditTab?: () => void;
 }
 
 export function SortableTab({
-  id, tab, winKey, index, tabKey, query, selectable, isLiveTab, editMode, selectedKeys, depth, onUngroup,
+  id, tab, winKey, index, tabKey, query, selectable, isLiveTab, editMode, selectedKeys, depth, onUngroup, onEditTab,
 }: Props) {
   const { ref, handleRef, isDragging } = useSortable({
     id,
@@ -47,6 +48,7 @@ export function SortableTab({
       editMode={editMode}
       depth={depth}
       onUngroup={onUngroup}
+      onEditTab={onEditTab}
     />
   );
 }

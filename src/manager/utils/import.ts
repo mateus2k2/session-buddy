@@ -126,6 +126,38 @@ export function parseTextImport(text: string): Session[] {
     .filter(s => s.tabCount > 0);
 }
 
+export function smartImportText(text: string): Session[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+
+  // Try JSON
+  try {
+    const data = JSON.parse(trimmed) as unknown;
+    const all: Session[] = Array.isArray(data) ? (data as Session[]) : [data as Session];
+    const valid = all.filter(s => s && typeof s === "object" && Array.isArray((s as Session).windows));
+    if (valid.length > 0) return valid;
+  } catch { /* not JSON */ }
+
+  // Try structured text export
+  const textSessions = parseTextImport(trimmed);
+  if (textSessions.length > 0) return textSessions;
+
+  // Fall back to plain URL list
+  const urls = trimmed.split("\n").map(u => u.trim()).filter(u => /^https?:\/\//i.test(u));
+  if (urls.length > 0) {
+    return [{
+      id: genId(),
+      name: new Date().toLocaleString(),
+      date: Date.now(),
+      windowCount: 1,
+      tabCount: urls.length,
+      windows: [{ tabs: urls.map((url, i): Tab => ({ index: i, url, title: url })) }],
+    }];
+  }
+
+  return [];
+}
+
 export function parseUrlList(text: string): { name?: string; tabs: Tab[]; incognito: boolean }[] {
   const lines = text.split(/\r?\n/);
   const hasIndented = lines.some(l => /^[ \t]/.test(l) && l.trim());

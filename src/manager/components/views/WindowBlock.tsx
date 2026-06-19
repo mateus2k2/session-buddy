@@ -47,6 +47,7 @@ interface Props {
   treeEnabled?: boolean;
   onSessionUpdate?: () => void;
   onSaveWindow?: (winIdx: number) => void;
+  onCloseWindow?: () => void;
 }
 
 // Only rendered inside DragDropProvider (edit mode).
@@ -105,7 +106,7 @@ function DroppableWinBody({
 
 export function WindowBlock({
   win, winIdx, winKey, totalWindows, query, selectable = true,
-  editSession = null, isLiveTab = false, treeEnabled = false, onSessionUpdate, onSaveWindow,
+  editSession = null, isLiveTab = false, treeEnabled = false, onSessionUpdate, onSaveWindow, onCloseWindow,
 }: Props) {
   const { state, dispatch, showModal, hideModal, toast, pushUndo } = useApp();
   const { tabOrder, tabMap } = useDragState();
@@ -131,6 +132,40 @@ export function WindowBlock({
     const allSelected = keys.every(k => newKeys.has(k));
     keys.forEach(k => allSelected ? newKeys.delete(k) : newKeys.add(k));
     dispatch({ type: "SET_SELECTED_TABS", keys: newKeys });
+  }
+
+  function createEditTabFn(tab: SessionWindow["tabs"][number]) {
+    if (!editSession) return undefined;
+    return () => {
+      showModal(
+        "Edit tab",
+        `<div class="settings-form">
+          <label>Title
+            <input type="text" id="edit-tab-title" value="${esc(tab.title ?? "")}" />
+          </label>
+          <label>URL
+            <input type="text" id="edit-tab-url" value="${esc(tab.url ?? "")}" />
+          </label>
+        </div>`,
+        [
+          { label: "Cancel", cls: "btn-ghost", action: hideModal },
+          {
+            label: "Save", cls: "btn-primary", action: async () => {
+              const newTitle = (document.getElementById("edit-tab-title") as HTMLInputElement).value.trim();
+              const newUrl = (document.getElementById("edit-tab-url") as HTMLInputElement).value.trim();
+              if (!newUrl) { toast("URL cannot be empty"); return; }
+              pushUndo({ type: "session", sessionId: editSession!.id, session: deepClone(editSession!) });
+              tab.title = newTitle || newUrl;
+              tab.url = newUrl;
+              hideModal();
+              await send({ type: "updateSession", session: editSession! });
+              toast("Tab updated");
+              onSessionUpdate?.();
+            }
+          },
+        ]
+      );
+    };
   }
 
   function openRenameModal() {
@@ -229,6 +264,7 @@ export function WindowBlock({
           selectedKeys={state.selectedTabKeys}
           depth={depth}
           onUngroup={(tab.groupId ?? -1) !== -1 ? ungroupTab : undefined}
+          onEditTab={createEditTabFn(tab)}
         />
       );
     } else {
@@ -294,6 +330,31 @@ export function WindowBlock({
             <svg viewBox="0 0 16 16" fill="none">
               <path d="M8 2v7M8 9L5 6M8 9l3-3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
               <rect x="1" y="11" width="14" height="3" rx="1" stroke="currentColor" strokeWidth="1.2"/>
+            </svg>
+          </button>
+        )}
+        {isLiveTab && win.id != null && onCloseWindow && !isPrivate && (
+          <button className="window-rename-btn" title="Close this browser window"
+            onClick={e => {
+              e.stopPropagation();
+              showModal(
+                "Close window",
+                `<p>Close this window and its ${currentTabs.length} tab${currentTabs.length !== 1 ? "s" : ""}?</p>`,
+                [
+                  { label: "Cancel", cls: "btn-ghost", action: hideModal },
+                  {
+                    label: "Close", cls: "btn-danger", action: async () => {
+                      hideModal();
+                      try { await browser.windows.remove(win.id!); onCloseWindow(); }
+                      catch { toast("Could not close window"); }
+                    }
+                  },
+                ]
+              );
+            }}>
+            <svg viewBox="0 0 16 16" fill="none">
+              <line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+              <line x1="12" y1="4" x2="4" y2="12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
             </svg>
           </button>
         )}
