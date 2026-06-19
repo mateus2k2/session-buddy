@@ -107,34 +107,110 @@ export function App() {
           return;
         }
 
-        // F2 — rename session
+        // F2 — rename window (if window selected), edit tab (if tabs selected), else rename session
         if (e.key === "F2") {
           e.preventDefault();
-          showModal(
-            "Rename collection",
-            `<input type="text" id="kb-rename-input" value="${esc(session.name)}" placeholder="Collection name" />`,
-            [
-              { label: "Cancel", cls: "btn-ghost", action: hideModal },
-              {
-                label: "Rename", cls: "btn-primary", action: async () => {
-                  const name = (document.getElementById("kb-rename-input") as HTMLInputElement).value.trim();
-                  if (!name) return;
-                  pushUndo({ type: "rename", sessionId: session.id, oldName: session.name });
-                  hideModal();
-                  await send({ type: "renameSession", id: session.id, name });
-                  toast("Renamed");
-                  await loadSessions();
-                }
-              },
-            ]
-          );
+          const focusedWi = state.focusedWinIdx;
+          if (focusedWi != null && session.windows[focusedWi]) {
+            const win = session.windows[focusedWi];
+            showModal(
+              "Rename window",
+              `<input id="kb-win-rename-input" type="text" value="${esc(win.name ?? "")}" placeholder="Window name (leave blank to reset)" />`,
+              [
+                { label: "Cancel", cls: "btn-ghost", action: hideModal },
+                {
+                  label: "Rename", cls: "btn-primary", action: async () => {
+                    const newName = (document.getElementById("kb-win-rename-input") as HTMLInputElement).value.trim();
+                    pushUndo({ type: "session", sessionId: session.id, session: deepClone(session) });
+                    win.name = newName || undefined;
+                    hideModal();
+                    await send({ type: "updateSession", session });
+                    toast("Window renamed");
+                    await loadSessions();
+                  }
+                },
+              ]
+            );
+          } else if (hasTabSel) {
+            const firstEntry = state.tabRenderOrder.find(r => state.selectedTabKeys.has(r.key));
+            if (firstEntry) {
+              const [wiStr, tiStr] = firstEntry.key.split(":");
+              const wi = parseInt(wiStr);
+              const ti = parseInt(tiStr);
+              const tabToEdit = [...(session.windows[wi]?.tabs ?? [])].sort((a, b) => a.index - b.index)[ti];
+              if (tabToEdit) {
+                showModal(
+                  "Edit tab",
+                  `<div class="settings-form">
+                    <label>Title<input type="text" id="kb-edit-tab-title" value="${esc(tabToEdit.title ?? "")}" /></label>
+                    <label>URL<input type="text" id="kb-edit-tab-url" value="${esc(tabToEdit.url ?? "")}" /></label>
+                  </div>`,
+                  [
+                    { label: "Cancel", cls: "btn-ghost", action: hideModal },
+                    {
+                      label: "Save", cls: "btn-primary", action: async () => {
+                        const newTitle = (document.getElementById("kb-edit-tab-title") as HTMLInputElement).value.trim();
+                        const newUrl = (document.getElementById("kb-edit-tab-url") as HTMLInputElement).value.trim();
+                        if (!newUrl) { toast("URL cannot be empty"); return; }
+                        pushUndo({ type: "session", sessionId: session.id, session: deepClone(session) });
+                        tabToEdit.title = newTitle || newUrl;
+                        tabToEdit.url = newUrl;
+                        hideModal();
+                        await send({ type: "updateSession", session });
+                        toast("Tab updated");
+                        await loadSessions();
+                      }
+                    },
+                  ]
+                );
+              }
+            }
+          } else {
+            showModal(
+              "Rename collection",
+              `<input type="text" id="kb-rename-input" value="${esc(session.name)}" placeholder="Collection name" />`,
+              [
+                { label: "Cancel", cls: "btn-ghost", action: hideModal },
+                {
+                  label: "Rename", cls: "btn-primary", action: async () => {
+                    const name = (document.getElementById("kb-rename-input") as HTMLInputElement).value.trim();
+                    if (!name) return;
+                    pushUndo({ type: "rename", sessionId: session.id, oldName: session.name });
+                    hideModal();
+                    await send({ type: "renameSession", id: session.id, name });
+                    toast("Renamed");
+                    await loadSessions();
+                  }
+                },
+              ]
+            );
+          }
           return;
         }
 
-        // Delete — remove selected tabs (if any), otherwise delete the whole session
+        // Delete — remove window (if window selected), tabs (if tabs selected), else delete session
         if (e.key === "Delete") {
           e.preventDefault();
-          if (hasTabSel) {
+          const focusedWi = state.focusedWinIdx;
+          if (focusedWi != null && session.windows[focusedWi]) {
+            // Remove the focused window from the session
+            pushUndo({ type: "session", sessionId: session.id, session: deepClone(session) });
+            const newWindows = session.windows.filter((_, wi) => wi !== focusedWi);
+            dispatch({ type: "SET_SELECTED_TABS", keys: new Set() });
+            dispatch({ type: "SET_FOCUSED_WIN", idx: null, winId: null });
+            if (newWindows.length === 0) {
+              await send({ type: "deleteSession", id: session.id });
+              toast("Session deleted");
+              dispatch({ type: "SET_VIEW", view: "current" });
+              await loadSessions();
+            } else {
+              newWindows.forEach((w, i) => w.tabs.forEach(t => { t.index = t.index; }));
+              const updated = { ...session, windows: newWindows, tabCount: newWindows.reduce((n, w) => n + w.tabs.length, 0), windowCount: newWindows.length };
+              await send({ type: "updateSession", session: updated });
+              dispatch({ type: "SET_SESSIONS", sessions: state.sessions.map(s => s.id === updated.id ? updated : s) });
+              toast("Window removed from collection");
+            }
+          } else if (hasTabSel) {
             // Remove selected tabs from session
             pushUndo({ type: "session", sessionId: session.id, session: deepClone(session) });
             const toRemove = new Set(state.selectedTabKeys);
@@ -202,10 +278,37 @@ export function App() {
           return;
         }
       }
+
+      // ── Current view shortcuts ────────────────────────────────────────────────
+      if (state.view === "current" && e.key === "Delete") {
+        e.preventDefault();
+        const focusedWinId = state.focusedWinId;
+        if (focusedWinId != null) {
+          // Close the entire focused browser window
+          try {
+            await browser.windows.remove(focusedWinId);
+            dispatch({ type: "SET_SELECTED_TABS", keys: new Set() });
+            dispatch({ type: "SET_FOCUSED_WIN", idx: null, winId: null });
+            setCurrentViewKey(k => k + 1);
+            toast("Window closed");
+          } catch { toast("Could not close window"); }
+        } else if (hasTabSel) {
+          const tabIds = state.tabRenderOrder
+            .filter(r => state.selectedTabKeys.has(r.key) && r.tab.id != null)
+            .map(r => r.tab.id!);
+          if (tabIds.length) {
+            await browser.tabs.remove(tabIds);
+            dispatch({ type: "SET_SELECTED_TABS", keys: new Set() });
+            setCurrentViewKey(k => k + 1);
+            toast(`Closed ${tabIds.length} tab${tabIds.length !== 1 ? "s" : ""}`);
+          }
+        }
+        return;
+      }
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [state, dispatch, showModal, hideModal, toast, pushUndo, loadSessions, undo, redo]);
+  }, [state, dispatch, showModal, hideModal, toast, pushUndo, loadSessions, undo, redo, setCurrentViewKey]);
 
   // Wire up hidden file inputs
   useEffect(() => {

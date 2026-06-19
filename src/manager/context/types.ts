@@ -94,6 +94,9 @@ export interface AppState {
   modalTitle: string;
   modalBody: string;
   modalActions: ModalAction[];
+  // Set when user clicks a window header (not individual tabs)
+  focusedWinIdx: number | null;
+  focusedWinId: number | null;
 }
 
 export interface ModalAction {
@@ -114,6 +117,7 @@ export type AppAction =
   | { type: "SET_SELECTED_SESSIONS"; ids: Set<string> }
   | { type: "SET_LAST_SESSION_ID"; id: string | null }
   | { type: "SET_HISTORY_ENTRY"; entry: HistoryEntry | null }
+  | { type: "SET_FOCUSED_WIN"; idx: number | null; winId: number | null }
   | { type: "PUSH_UNDO"; snapshot: UndoSnapshot }
   | { type: "APPLY_UNDO"; redoSnapshot: UndoSnapshot | null; sessions?: Session[] }
   | { type: "APPLY_REDO"; undoSnapshot: UndoSnapshot | null; sessions?: Session[] }

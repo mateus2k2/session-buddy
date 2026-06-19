@@ -20,12 +20,14 @@ const initialState: AppState = {
   modalTitle: "",
   modalBody: "",
   modalActions: [],
+  focusedWinIdx: null,
+  focusedWinId: null,
 };
 
 function reducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "SET_SESSIONS":      return { ...state, sessions: action.sessions };
-    case "SET_VIEW":          return { ...state, view: action.view, historyEntry: null, selectedTabKeys: new Set() };
+    case "SET_VIEW":          return { ...state, view: action.view, historyEntry: null, selectedTabKeys: new Set(), focusedWinIdx: null, focusedWinId: null };
     case "SET_SEARCH":        return { ...state, searchQuery: action.query };
     case "SET_SELECTED_TABS": return { ...state, selectedTabKeys: action.keys };
     case "SET_LAST_TAB_KEY":  return { ...state, lastTabKey: action.key };
@@ -33,6 +35,7 @@ function reducer(state: AppState, action: AppAction): AppState {
     case "SET_SELECTED_SESSIONS": return { ...state, selectedSessionIds: action.ids };
     case "SET_LAST_SESSION_ID":   return { ...state, lastSessionId: action.id };
     case "SET_HISTORY_ENTRY": return { ...state, historyEntry: action.entry };
+    case "SET_FOCUSED_WIN":   return { ...state, focusedWinIdx: action.idx, focusedWinId: action.winId };
 
     case "PUSH_UNDO":
       return {

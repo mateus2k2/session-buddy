@@ -312,7 +312,17 @@ export function Sidebar({ onLoadSessions, counts }: Props) {
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
-            modifiers={[({ transform }) => ({ ...transform, x: 0 })]}
+            autoScroll={false}
+            modifiers={[({ transform, draggingNodeRect }) => {
+              const x = 0;
+              if (!draggingNodeRect) return { ...transform, x };
+              const container = document.getElementById("sessions-list");
+              if (!container) return { ...transform, x };
+              const rect = container.getBoundingClientRect();
+              const minY = rect.top - draggingNodeRect.top;
+              const maxY = rect.bottom - draggingNodeRect.bottom;
+              return { ...transform, x, y: Math.min(Math.max(transform.y, minY), maxY) };
+            }]}
             onDragEnd={onDragEnd}
           >
             <SortableContext items={filteredIds} strategy={verticalListSortingStrategy}>

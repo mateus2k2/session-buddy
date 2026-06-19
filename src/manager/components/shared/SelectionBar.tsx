@@ -78,6 +78,35 @@ export function SelectionBar({ onLoadSessions, onRefreshCurrent }: Props) {
     clearSelection();
   }
 
+  function getSelectedUrls(): string[] {
+    if (!session) return [];
+    const urls: string[] = [];
+    session.windows.forEach((win, wi) => {
+      [...win.tabs].sort((a, b) => a.index - b.index).forEach((tab, ti) => {
+        if (selectedTabKeys.has(`${wi}:${ti}`) && tab.url) urls.push(tab.url);
+      });
+    });
+    return urls;
+  }
+
+  async function openInNewWindow() {
+    const urls = getSelectedUrls();
+    if (!urls.length) return;
+    await browser.windows.create({ url: urls });
+    clearSelection();
+    toast(`Opened ${urls.length} tab${urls.length !== 1 ? "s" : ""} in new window`);
+  }
+
+  async function openInCurrentWindow() {
+    const urls = getSelectedUrls();
+    if (!urls.length) return;
+    for (const url of urls) {
+      await browser.tabs.create({ url });
+    }
+    clearSelection();
+    toast(`Opened ${urls.length} tab${urls.length !== 1 ? "s" : ""} in current window`);
+  }
+
   function extractToNewWindow() {
     if (!session) return;
 
@@ -187,8 +216,7 @@ export function SelectionBar({ onLoadSessions, onRefreshCurrent }: Props) {
     onRefreshCurrent?.();
   }
 
-  async function saveSelectionAsCollection() {
-    // Group selected tabs by window index, preserving multi-window structure
+  function buildSelectionSession(name: string): Session | null {
     const winTabMap = new Map<number, Tab[]>();
     for (const { key, tab } of state.tabRenderOrder) {
       if (!selectedTabKeys.has(key)) continue;
@@ -196,8 +224,19 @@ export function SelectionBar({ onLoadSessions, onRefreshCurrent }: Props) {
       if (!winTabMap.has(wi)) winTabMap.set(wi, []);
       winTabMap.get(wi)!.push(tab);
     }
-    if (!winTabMap.size) { toast("Nothing to save"); return; }
+    if (!winTabMap.size) return null;
+    const windows: SessionWindow[] = [...winTabMap.values()].map(tabs => ({
+      tabs: tabs.map((t, i) => ({ ...t, index: i })),
+    }));
+    return {
+      id: genId(), name, date: Date.now(),
+      windowCount: windows.length,
+      tabCount: windows.reduce((n, w) => n + w.tabs.length, 0),
+      windows,
+    };
+  }
 
+  async function saveSelectionAsCollection() {
     const defaultName = new Date().toLocaleString();
     showModal(
       "Save selection as collection",
@@ -208,18 +247,34 @@ export function SelectionBar({ onLoadSessions, onRefreshCurrent }: Props) {
           label: "Save", cls: "btn-primary", action: async () => {
             const name = (document.getElementById("save-live-name") as HTMLInputElement).value.trim() || defaultName;
             hideModal();
-            const windows: SessionWindow[] = [...winTabMap.values()].map(tabs => ({
-              tabs: tabs.map((t, i) => ({ ...t, index: i })),
-            }));
-            const newSession: Session = {
-              id: genId(), name, date: Date.now(),
-              windowCount: windows.length,
-              tabCount: windows.reduce((n, w) => n + w.tabs.length, 0),
-              windows,
-            };
+            const newSession = buildSelectionSession(name);
+            if (!newSession) { toast("Nothing to save"); return; }
             await send({ type: "importSessions", sessions: [newSession] });
             toast("Saved as collection");
             await onLoadSessions();
+            clearSelection();
+          }
+        },
+      ]
+    );
+  }
+
+  async function openSelectionInEditor() {
+    const defaultName = new Date().toLocaleString();
+    showModal(
+      "Open selection in editor",
+      `<input type="text" id="edit-sel-name" value="${esc(defaultName)}" placeholder="Collection name" />`,
+      [
+        { label: "Cancel", cls: "btn-ghost", action: hideModal },
+        {
+          label: "Open", cls: "btn-primary", action: async () => {
+            const name = (document.getElementById("edit-sel-name") as HTMLInputElement).value.trim() || defaultName;
+            hideModal();
+            const newSession = buildSelectionSession(name);
+            if (!newSession) { toast("Nothing to save"); return; }
+            await send({ type: "importSessions", sessions: [newSession] });
+            await onLoadSessions();
+            dispatch({ type: "SET_VIEW", view: newSession.id });
             clearSelection();
           }
         },
@@ -232,6 +287,12 @@ export function SelectionBar({ onLoadSessions, onRefreshCurrent }: Props) {
       <span className="sel-count">{count} tab{count !== 1 ? "s" : ""} selected</span>
       {isSessionView && session && (
         <>
+          <button className="sel-btn" onClick={() => void openInNewWindow()}>
+            Open in new window
+          </button>
+          <button className="sel-btn" onClick={() => void openInCurrentWindow()}>
+            Open in current window
+          </button>
           <button className="sel-btn sel-remove" onClick={() => void removeSelected()}>
             Remove
           </button>
@@ -247,6 +308,9 @@ export function SelectionBar({ onLoadSessions, onRefreshCurrent }: Props) {
         <>
           <button className="sel-btn" onClick={() => void saveSelectionAsCollection()}>
             Save as collection
+          </button>
+          <button className="sel-btn" onClick={() => void openSelectionInEditor()}>
+            Edit as collection
           </button>
           <button className="sel-btn sel-remove" onClick={() => void closeInBrowser()}>
             Close in browser

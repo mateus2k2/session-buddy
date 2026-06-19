@@ -132,6 +132,7 @@ export function WindowBlock({
     const allSelected = keys.every(k => newKeys.has(k));
     keys.forEach(k => allSelected ? newKeys.delete(k) : newKeys.add(k));
     dispatch({ type: "SET_SELECTED_TABS", keys: newKeys });
+    dispatch({ type: "SET_FOCUSED_WIN", idx: allSelected ? null : winIdx, winId: allSelected ? null : (win.id ?? null) });
   }
 
   function createEditTabFn(tab: SessionWindow["tabs"][number]) {

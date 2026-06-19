@@ -39,6 +39,8 @@ export function TabRow({
     if (!selectable) return;
     if ((e.target as HTMLElement).closest("button,a")) return;
 
+    dispatch({ type: "SET_FOCUSED_WIN", idx: null, winId: null });
+
     if (e.shiftKey) {
       e.preventDefault();
       const { tabRenderOrder, lastTabKey, selectedTabKeys } = state;

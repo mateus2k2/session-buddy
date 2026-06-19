@@ -1,6 +1,7 @@
 import { createContext, useContext, useRef, useState, useEffect } from "react";
 import { DragDropProvider, DragOverlay } from "@dnd-kit/react";
 import { RestrictToVerticalAxis } from "@dnd-kit/abstract/modifiers";
+import { RestrictToElement } from "@dnd-kit/dom/modifiers";
 import { PointerSensor, PointerActivationConstraints, KeyboardSensor } from "@dnd-kit/dom";
 import { move } from "@dnd-kit/helpers";
 import { useApp } from "../../context/AppContext";
@@ -286,7 +287,7 @@ export function SessionDnD({ session, onUpdate, children }: Props) {
     <DragStateCtx.Provider value={{ tabOrder, tabMap: tabMapRef.current }}>
       <DragDropProvider
         sensors={sensors}
-        modifiers={[RestrictToVerticalAxis]}
+        modifiers={[RestrictToVerticalAxis, RestrictToElement.configure({ element: () => document.querySelector(".content-area") })]}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
